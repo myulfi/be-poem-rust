@@ -1,0 +1,11 @@
+Create project              | cargo new be-rust-poem
+
+Set toolchain to nightly	| rustup override set nightly
+Install postgres        	| cargo install diesel_cli --no-default-features --features postgres
+Build (Changing Cargo.toml) | cargo build
+Build w/o produce binary    | cargo check
+Update version depedency    | cargo update
+Build and Run				| cargo run
+Build and Run w/ arg		| cargo run -- arg1 arg2
+Build Distriution File		| cargo build --release
+Build HTML for doc  		| cargo doc --open
