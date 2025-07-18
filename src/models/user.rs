@@ -1,26 +1,6 @@
 use chrono::{NaiveDate, NaiveDateTime};
 use diesel::prelude::{Insertable, Queryable};
-use serde::{Deserialize, Serialize};
-
-#[derive(Serialize, Debug, Deserialize)]
-
-pub struct Login {
-    pub username: String,
-    pub password: String,
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Token {
-    pub access_token: String,
-    pub refresh_token: String,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct Claims {
-    pub username: String,
-    pub exp: usize, // waktu kedaluwarsa (wajib untuk JWT)
-}
+use serde::Serialize;
 
 #[derive(Insertable, Queryable, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -54,20 +34,4 @@ pub struct User {
     #[serde(rename = "updatedDate")]
     pub dt_updated: Option<NaiveDateTime>,
     pub version: i16,
-}
-
-#[derive(Serialize)]
-pub struct UserAuthResponse {
-    #[serde(rename = "name")]
-    pub nm: String,
-    #[serde(rename = "roleList")]
-    pub role: Vec<u8>,
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct AuthResponse {
-    pub access_token: String,
-    pub refresh_token: String,
-    pub user: UserAuthResponse,
 }

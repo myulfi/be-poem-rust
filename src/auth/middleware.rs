@@ -1,14 +1,13 @@
-use crate::models::login::Claims;
-use crate::utils::common;
+use crate::{auth::model::Claims, utils::common};
 use jsonwebtoken::{DecodingKey, Validation, decode};
 use poem::{FromRequest, Request, RequestBody, http::StatusCode};
 use std::{env, future::Future};
 
-pub struct AuthenticatedUser {
+pub struct Middleware {
     pub claims: Claims,
 }
 
-impl<'a> FromRequest<'a> for AuthenticatedUser {
+impl<'a> FromRequest<'a> for Middleware {
     fn from_request(
         req: &'a Request,
         _body: &mut RequestBody,
@@ -30,7 +29,12 @@ impl<'a> FromRequest<'a> for AuthenticatedUser {
                 common::error_message(StatusCode::UNAUTHORIZED, "Missing Bearer prefix")
             })?;
 
-            let secret = env::var("JWT_ACCESS_TOKEN_SECRET").map_err(|_| {
+            let secret = env::var(if "/refresh-token.json" == req.uri().path() {
+                "JWT_REFRESH_TOKEN_SECRET"
+            } else {
+                "JWT_ACCESS_TOKEN_SECRET"
+            })
+            .map_err(|_| {
                 common::error_message(StatusCode::INTERNAL_SERVER_ERROR, "Missing JWT secret")
             })?;
 
@@ -43,7 +47,7 @@ impl<'a> FromRequest<'a> for AuthenticatedUser {
                 common::error_message(StatusCode::UNAUTHORIZED, "Invalid or expired token")
             })?;
 
-            Ok(AuthenticatedUser {
+            Ok(Middleware {
                 claims: token_data.claims,
             })
         })

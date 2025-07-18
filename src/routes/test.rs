@@ -18,12 +18,11 @@ use poem::{
     http::StatusCode,
     web::{Json, Path},
 };
-// use std::io::{self, Write};
 
 #[handler]
 pub fn example_template_list(
     pool: poem::web::Data<&DbPool>,
-    _: crate::utils::auth::AuthenticatedUser,
+    _: crate::auth::middleware::Middleware,
     Query(pagination): Query<Pagination>,
 ) -> Result<Json<PaginatedResponse<ExampleTemplate>>, poem::Error> {
     let start = pagination.start.unwrap_or(0);
@@ -55,8 +54,6 @@ pub fn example_template_list(
             _ => {}
         }
 
-        // println!("haha{}", user.claims.username);
-        // io::stdout().flush().unwrap();
         let data = query
             .offset(start)
             .limit(length)
@@ -71,7 +68,7 @@ pub fn example_template_list(
 #[handler]
 pub fn get_example_template_id(
     pool: poem::web::Data<&DbPool>,
-    _: crate::utils::auth::AuthenticatedUser,
+    _: crate::auth::middleware::Middleware,
     Path(example_template_id): Path<i64>,
 ) -> Result<Json<DataResponse<ExampleTemplate>>, poem::Error> {
     let conn = &mut pool.get().unwrap();
@@ -89,7 +86,7 @@ pub fn get_example_template_id(
 #[handler]
 pub fn add_example_template(
     pool: poem::web::Data<&DbPool>,
-    user: crate::utils::auth::AuthenticatedUser,
+    user: crate::auth::middleware::Middleware,
     Json(example_template): Json<NewExampleTemplate>,
     // ) -> Json<ExampleTemplate> {
 ) -> Result<Json<DataResponse<ExampleTemplate>>, poem::Error> {
@@ -131,7 +128,7 @@ pub fn add_example_template(
 #[handler]
 pub fn update_example_template(
     pool: poem::web::Data<&DbPool>,
-    user: crate::utils::auth::AuthenticatedUser,
+    user: crate::auth::middleware::Middleware,
     Path(example_template_id): Path<i64>,
     Json(mut update): Json<UpdateExampleTemplate>,
 ) -> Result<Json<DataResponse<ExampleTemplate>>, poem::Error> {

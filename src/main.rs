@@ -1,3 +1,4 @@
+mod auth;
 mod db;
 mod models;
 mod routes;
@@ -11,8 +12,11 @@ use std::env;
 use std::net::SocketAddr;
 use tokio::signal;
 
-use crate::routes::credential::credential_routes;
+use crate::auth::jwt::credential_routes;
 use crate::routes::test::test_routes;
+
+// use std::io::{self, Write};
+// io::stdout().flush().unwrap();
 
 #[handler]
 fn hello() -> &'static str {
