@@ -42,3 +42,17 @@ table! {
         version -> SmallInt,
     }
 }
+
+table! {
+    tbl_user_role (id) {
+        id -> BigInt,
+        username -> Varchar,
+        mt_role_id -> SmallInt,
+        is_del -> SmallInt,
+        created_by -> Varchar,
+        dt_created -> Timestamp,
+        updated_by -> Nullable<Varchar>,
+        dt_updated -> Nullable<Timestamp>,
+        version -> SmallInt,
+    }
+}
