@@ -1,14 +1,14 @@
 use crate::models::common::{DataResponse, PaginatedResponse};
 use crate::schema::tbl_example_template::dsl::*;
-use crate::utils::common;
+use crate::utils::common::{self, validate_id, validation_error_response};
 use crate::{
     db::DbPool,
     models::common::Pagination,
     // schema::*,
     models::example_template::{ExampleTemplate, NewExampleTemplate, UpdateExampleTemplate},
 };
-use bigdecimal::BigDecimal;
-use bigdecimal::num_bigint::BigInt;
+// use bigdecimal::BigDecimal;
+// use bigdecimal::num_bigint::BigInt;
 use chrono::Utc;
 use diesel::prelude::*;
 use poem::IntoResponse;
@@ -18,13 +18,14 @@ use poem::{
     http::StatusCode,
     web::{Json, Path},
 };
+use validator::Validate;
 
 #[handler]
 pub fn example_template_list(
     pool: poem::web::Data<&DbPool>,
     _: crate::auth::middleware::Middleware,
     Query(pagination): Query<Pagination>,
-) -> Result<Json<PaginatedResponse<ExampleTemplate>>, poem::Error> {
+) -> poem::Result<impl IntoResponse> {
     let start = pagination.start.unwrap_or(0);
     let length = pagination.length.unwrap_or(10);
 
@@ -70,7 +71,8 @@ pub fn get_example_template_id(
     pool: poem::web::Data<&DbPool>,
     _: crate::auth::middleware::Middleware,
     Path(example_template_id): Path<i64>,
-) -> Result<Json<DataResponse<ExampleTemplate>>, poem::Error> {
+) -> poem::Result<impl IntoResponse> {
+    validate_id(example_template_id)?;
     let conn = &mut pool.get().unwrap();
 
     let example_template = tbl_example_template
@@ -88,17 +90,16 @@ pub fn add_example_template(
     pool: poem::web::Data<&DbPool>,
     user: crate::auth::middleware::Middleware,
     Json(example_template): Json<NewExampleTemplate>,
-    // ) -> Json<ExampleTemplate> {
-) -> Result<Json<DataResponse<ExampleTemplate>>, poem::Error> {
+) -> poem::Result<impl IntoResponse> {
     let new_template = ExampleTemplate {
         id: common::generate_id(),
         nm: example_template.nm,
         dscp: example_template.dscp,
-        val: Some(99),
-        amt: Some(BigDecimal::new(BigInt::from(9999), 2)),
-        dt: Some(Utc::now().date_naive()),
-        foreign_id: None,
-        is_active: 0,
+        val: example_template.val,
+        amt: example_template.amt,
+        dt: example_template.dt,
+        foreign_id: example_template.foreign_id,
+        is_active: 1,
         is_del: 0,
         created_by: user.claims.username,
         dt_created: Utc::now().naive_utc(),
@@ -106,12 +107,18 @@ pub fn add_example_template(
         dt_updated: None,
         version: 0,
     };
-    let conn = &mut pool.get().unwrap();
-    let example_template = diesel::insert_into(tbl_example_template)
+
+    let mut conn = pool.get().map_err(|e| {
+        eprintln!("Failed to get DB connection: {:?}", e);
+        common::error_message(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Failed to get database connection",
+        )
+    })?;
+
+    let inserted_template = diesel::insert_into(tbl_example_template)
         .values(&new_template)
-        .get_result(conn)
-        // .map(Json)
-        // .unwrap()
+        .get_result::<ExampleTemplate>(&mut conn)
         .map_err(|e| {
             eprintln!("Diesel insert error: {:?}", e);
             common::error_message(
@@ -120,9 +127,11 @@ pub fn add_example_template(
             )
         })?;
 
-    Ok(Json(DataResponse {
-        data: example_template,
-    }))
+    let json = Json(DataResponse {
+        data: inserted_template,
+    });
+
+    Ok((StatusCode::CREATED, json))
 }
 
 #[handler]
@@ -131,7 +140,13 @@ pub fn update_example_template(
     user: crate::auth::middleware::Middleware,
     Path(example_template_id): Path<i64>,
     Json(mut update): Json<UpdateExampleTemplate>,
-) -> Result<Json<DataResponse<ExampleTemplate>>, poem::Error> {
+) -> poem::Result<impl IntoResponse> {
+    validate_id(example_template_id)?;
+
+    if let Err(e) = update.validate() {
+        return Err(validation_error_response(e));
+    }
+
     let conn = &mut pool.get().map_err(|e| {
         eprintln!("DB pool error: {:?}", e);
         common::error_message(
@@ -166,7 +181,8 @@ pub fn update_example_template(
 pub fn delete_example_template(
     pool: poem::web::Data<&DbPool>,
     Path(example_template_id): Path<i64>,
-) -> Result<impl IntoResponse, poem::Error> {
+) -> poem::Result<impl IntoResponse> {
+    validate_id(example_template_id)?;
     let conn = &mut pool.get().unwrap();
 
     match diesel::delete(tbl_example_template.filter(id.eq(example_template_id))).execute(conn) {
@@ -174,10 +190,10 @@ pub fn delete_example_template(
             if affected_rows == 0 {
                 Err(common::error_message(
                     StatusCode::NOT_FOUND,
-                    "No template found",
+                    "No Data found",
                 ))
             } else {
-                Ok(StatusCode::NO_CONTENT) // 204
+                Ok(StatusCode::NO_CONTENT)
             }
         }
         Err(e) => {
