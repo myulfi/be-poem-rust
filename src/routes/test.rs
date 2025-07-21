@@ -4,7 +4,6 @@ use crate::utils::common::{self, validate_id, validation_error_response};
 use crate::{
     db::DbPool,
     models::common::Pagination,
-    // schema::*,
     models::example_template::{ExampleTemplate, NewExampleTemplate, UpdateExampleTemplate},
 };
 // use bigdecimal::BigDecimal;
@@ -34,12 +33,19 @@ pub fn example_template_list(
         query = query.filter(nm.ilike(format!("%{}%", term)));
     }
 
-    let conn = &mut pool.get().unwrap();
+    let conn = &mut pool.get().map_err(|_| {
+        common::error_message(StatusCode::INTERNAL_SERVER_ERROR, "Connection failed")
+    })?;
 
-    let total: i64 = query
-        .count()
-        .get_result(conn)
-        .expect("Failed to count rows");
+    let total: i64 = match query.count().get_result(conn) {
+        Ok(count) => count,
+        Err(_) => {
+            return Err(common::error_message(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Not Found",
+            ));
+        }
+    };
 
     if total > 0 {
         let mut query = tbl_example_template.into_boxed();
@@ -59,7 +65,9 @@ pub fn example_template_list(
             .offset(start)
             .limit(length)
             .load::<ExampleTemplate>(conn)
-            .unwrap();
+            .map_err(|_| {
+                common::error_message(StatusCode::INTERNAL_SERVER_ERROR, "Failed to load data")
+            })?;
         Ok(Json(PaginatedResponse { total, data }))
     } else {
         Err(common::error_message(StatusCode::NOT_FOUND, "Not Found"))
@@ -73,7 +81,10 @@ pub fn get_example_template_id(
     Path(example_template_id): Path<i64>,
 ) -> poem::Result<impl IntoResponse> {
     validate_id(example_template_id)?;
-    let conn = &mut pool.get().unwrap();
+
+    let conn = &mut pool.get().map_err(|_| {
+        common::error_message(StatusCode::INTERNAL_SERVER_ERROR, "Connection failed")
+    })?;
 
     let example_template = tbl_example_template
         .filter(id.eq(example_template_id))
@@ -91,6 +102,10 @@ pub fn add_example_template(
     user: crate::auth::middleware::Middleware,
     Json(example_template): Json<NewExampleTemplate>,
 ) -> poem::Result<impl IntoResponse> {
+    if let Err(e) = example_template.validate() {
+        return Err(validation_error_response(e));
+    }
+
     let new_template = ExampleTemplate {
         id: common::generate_id(),
         nm: example_template.nm,
@@ -108,30 +123,23 @@ pub fn add_example_template(
         version: 0,
     };
 
-    let mut conn = pool.get().map_err(|e| {
-        eprintln!("Failed to get DB connection: {:?}", e);
-        common::error_message(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "Failed to get database connection",
-        )
+    let conn = &mut pool.get().map_err(|_| {
+        common::error_message(StatusCode::INTERNAL_SERVER_ERROR, "Connection failed")
     })?;
 
     let inserted_template = diesel::insert_into(tbl_example_template)
         .values(&new_template)
-        .get_result::<ExampleTemplate>(&mut conn)
-        .map_err(|e| {
-            eprintln!("Diesel insert error: {:?}", e);
-            common::error_message(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "Failed to insert template",
-            )
+        .get_result::<ExampleTemplate>(conn)
+        .map_err(|_| {
+            common::error_message(StatusCode::INTERNAL_SERVER_ERROR, "Failed to insert")
         })?;
 
-    let json = Json(DataResponse {
-        data: inserted_template,
-    });
-
-    Ok((StatusCode::CREATED, json))
+    Ok((
+        StatusCode::CREATED,
+        Json(DataResponse {
+            data: inserted_template,
+        }),
+    ))
 }
 
 #[handler]
@@ -147,12 +155,8 @@ pub fn update_example_template(
         return Err(validation_error_response(e));
     }
 
-    let conn = &mut pool.get().map_err(|e| {
-        eprintln!("DB pool error: {:?}", e);
-        common::error_message(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "Database connection failed",
-        )
+    let conn = &mut pool.get().map_err(|_| {
+        common::error_message(StatusCode::INTERNAL_SERVER_ERROR, "Connection failed")
     })?;
 
     update.version = update.version + 1;
@@ -169,10 +173,7 @@ pub fn update_example_template(
         dt_updated.eq(Some(Utc::now().naive_utc())),
     ))
     .get_result::<ExampleTemplate>(conn)
-    .map_err(|e| {
-        eprintln!("Diesel insert error: {:?}", e);
-        common::error_message(StatusCode::NOT_FOUND, "Failed to update template")
-    })?;
+    .map_err(|_| common::error_message(StatusCode::NOT_FOUND, "Failed to update"))?;
 
     Ok(Json(DataResponse { data: updated }))
 }
@@ -183,7 +184,10 @@ pub fn delete_example_template(
     Path(example_template_id): Path<i64>,
 ) -> poem::Result<impl IntoResponse> {
     validate_id(example_template_id)?;
-    let conn = &mut pool.get().unwrap();
+
+    let conn = &mut pool.get().map_err(|_| {
+        common::error_message(StatusCode::INTERNAL_SERVER_ERROR, "Connection failed")
+    })?;
 
     match diesel::delete(tbl_example_template.filter(id.eq(example_template_id))).execute(conn) {
         Ok(affected_rows) => {
@@ -196,13 +200,10 @@ pub fn delete_example_template(
                 Ok(StatusCode::NO_CONTENT)
             }
         }
-        Err(e) => {
-            eprintln!("Diesel delete error: {:?}", e);
-            Err(common::error_message(
-                StatusCode::NOT_FOUND,
-                "Failed to delete template",
-            ))
-        }
+        Err(_) => Err(common::error_message(
+            StatusCode::NOT_FOUND,
+            "Failed to update",
+        )),
     }
 }
 
