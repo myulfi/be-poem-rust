@@ -3,15 +3,14 @@ use jsonwebtoken::{DecodingKey, Validation, decode};
 use poem::{FromRequest, Request, RequestBody, http::StatusCode};
 use std::{env, future::Future};
 
-pub struct Middleware {
+pub struct JwtAuth {
     pub claims: Claims,
 }
 
-impl<'a> FromRequest<'a> for Middleware {
+impl<'a> FromRequest<'a> for JwtAuth {
     fn from_request(
         req: &'a Request,
         _body: &mut RequestBody,
-        //) -> Pin<Box<dyn Future<Output = PoemResult<Self>> + Send + 'a>> {
     ) -> impl Future<Output = Result<Self, poem::Error>> + Send {
         Box::pin(async move {
             let auth_header = req
@@ -47,7 +46,7 @@ impl<'a> FromRequest<'a> for Middleware {
                 common::error_message(StatusCode::UNAUTHORIZED, "Invalid or expired token")
             })?;
 
-            Ok(Middleware {
+            Ok(JwtAuth {
                 claims: token_data.claims,
             })
         })

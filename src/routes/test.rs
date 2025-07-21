@@ -22,7 +22,7 @@ use validator::Validate;
 #[handler]
 pub fn example_template_list(
     pool: poem::web::Data<&DbPool>,
-    _: crate::auth::middleware::Middleware,
+    _: crate::auth::middleware::JwtAuth,
     Query(pagination): Query<Pagination>,
 ) -> poem::Result<impl IntoResponse> {
     let start = pagination.start.unwrap_or(0);
@@ -77,7 +77,7 @@ pub fn example_template_list(
 #[handler]
 pub fn get_example_template_id(
     pool: poem::web::Data<&DbPool>,
-    _: crate::auth::middleware::Middleware,
+    _: crate::auth::middleware::JwtAuth,
     Path(example_template_id): Path<i64>,
 ) -> poem::Result<impl IntoResponse> {
     validate_id(example_template_id)?;
@@ -99,7 +99,7 @@ pub fn get_example_template_id(
 #[handler]
 pub fn add_example_template(
     pool: poem::web::Data<&DbPool>,
-    user: crate::auth::middleware::Middleware,
+    jwt_auth: crate::auth::middleware::JwtAuth,
     Json(example_template): Json<NewExampleTemplate>,
 ) -> poem::Result<impl IntoResponse> {
     if let Err(e) = example_template.validate() {
@@ -116,7 +116,7 @@ pub fn add_example_template(
         foreign_id: example_template.foreign_id,
         is_active: 1,
         is_del: 0,
-        created_by: user.claims.username,
+        created_by: jwt_auth.claims.username,
         dt_created: Utc::now().naive_utc(),
         updated_by: None,
         dt_updated: None,
@@ -145,7 +145,7 @@ pub fn add_example_template(
 #[handler]
 pub fn update_example_template(
     pool: poem::web::Data<&DbPool>,
-    user: crate::auth::middleware::Middleware,
+    jwt_auth: crate::auth::middleware::JwtAuth,
     Path(example_template_id): Path<i64>,
     Json(mut update): Json<UpdateExampleTemplate>,
 ) -> poem::Result<impl IntoResponse> {
@@ -169,7 +169,7 @@ pub fn update_example_template(
     // .set(&update)
     .set((
         &update,
-        updated_by.eq(Some(user.claims.username.clone())),
+        updated_by.eq(Some(jwt_auth.claims.username.clone())),
         dt_updated.eq(Some(Utc::now().naive_utc())),
     ))
     .get_result::<ExampleTemplate>(conn)
@@ -181,6 +181,7 @@ pub fn update_example_template(
 #[handler]
 pub fn delete_example_template(
     pool: poem::web::Data<&DbPool>,
+    _: crate::auth::middleware::JwtAuth,
     Path(example_template_id): Path<i64>,
 ) -> poem::Result<impl IntoResponse> {
     validate_id(example_template_id)?;

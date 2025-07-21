@@ -111,11 +111,11 @@ pub fn generate_token(
 #[handler]
 pub fn refresh_token(
     pool: poem::web::Data<&DbPool>,
-    user_middleware: crate::auth::middleware::Middleware,
+    jwt_auth: crate::auth::middleware::JwtAuth,
 ) -> Result<Json<AuthResponse>, poem::Error> {
     let conn = &mut pool.get().unwrap();
     let user = tbl_user
-        .filter(username.eq(&user_middleware.claims.username))
+        .filter(username.eq(&jwt_auth.claims.username))
         .first::<User>(conn)
         .map_err(|err| match err {
             diesel::result::Error::NotFound => {
