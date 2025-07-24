@@ -33,34 +33,11 @@ pub struct ExampleTemplate {
     pub version: i16,
 }
 
-#[derive(Queryable, Serialize, Insertable, Deserialize, Validate)]
+#[derive(Queryable, Serialize, Insertable, Deserialize, Validate, AsChangeset)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 #[diesel(table_name = crate::schema::tbl_example_template)]
-pub struct NewExampleTemplate {
-    #[serde(rename = "name")]
-    #[validate(length(
-        min = 4,
-        max = 100,
-        message = "Name must be between 4 and 100 characters"
-    ))]
-    pub nm: Option<String>,
-    #[serde(rename = "description")]
-    #[validate(length(max = 255, message = "Description must not exceed 255 characters"))]
-    pub dscp: Option<String>,
-    #[serde(rename = "value")]
-    #[validate(range(min = 1, max = 8, message = "Value must be between 1 and 8"))]
-    pub val: Option<i16>,
-    #[serde(rename = "amount")]
-    pub amt: Option<BigDecimal>,
-    #[serde(rename = "date")]
-    pub dt: Option<NaiveDate>,
-    pub foreign_id: Option<i64>,
-}
-
-#[derive(Deserialize, AsChangeset, Validate)]
-#[diesel(table_name = crate::schema::tbl_example_template)]
 #[diesel(treat_none_as_null = true)]
-pub struct UpdateExampleTemplate {
+pub struct EntryExampleTemplate {
     #[serde(rename = "name")]
     #[validate(length(
         min = 4,
@@ -79,5 +56,6 @@ pub struct UpdateExampleTemplate {
     #[serde(rename = "date")]
     pub dt: Option<NaiveDate>,
     pub foreign_id: Option<i64>,
+    #[serde(default)]
     pub version: i16,
 }

@@ -10,8 +10,7 @@ use crate::utils::common;
 use chrono::{Duration, Utc};
 use diesel::prelude::*;
 use jsonwebtoken::{EncodingKey, Header, encode};
-use poem::post;
-use poem::{Route, handler, http::StatusCode, web::Json};
+use poem::{handler, http::StatusCode, web::Json};
 
 fn create_token(
     usr: &str,
@@ -129,10 +128,4 @@ pub fn refresh_token(
         &user.username,
         user.nick_nm,
     )?))
-}
-
-pub fn credential_routes() -> Route {
-    Route::new()
-        .at("/generate-token.json", post(generate_token))
-        .at("/refresh-token.json", post(refresh_token))
 }

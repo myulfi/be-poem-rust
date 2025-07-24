@@ -4,7 +4,7 @@ use crate::utils::common::{self, validate_id, validation_error_response};
 use crate::{
     db::DbPool,
     models::common::Pagination,
-    models::example_template::{ExampleTemplate, NewExampleTemplate, UpdateExampleTemplate},
+    models::example_template::{EntryExampleTemplate, ExampleTemplate},
 };
 // use bigdecimal::BigDecimal;
 // use bigdecimal::num_bigint::BigInt;
@@ -100,20 +100,20 @@ pub fn get_example_template_id(
 pub fn add_example_template(
     pool: poem::web::Data<&DbPool>,
     jwt_auth: crate::auth::middleware::JwtAuth,
-    Json(example_template): Json<NewExampleTemplate>,
+    Json(entry_example_template): Json<EntryExampleTemplate>,
 ) -> poem::Result<impl IntoResponse> {
-    if let Err(e) = example_template.validate() {
+    if let Err(e) = entry_example_template.validate() {
         return Err(validation_error_response(e));
     }
 
-    let new_template = ExampleTemplate {
+    let example_template = ExampleTemplate {
         id: common::generate_id(),
-        nm: example_template.nm,
-        dscp: example_template.dscp,
-        val: example_template.val,
-        amt: example_template.amt,
-        dt: example_template.dt,
-        foreign_id: example_template.foreign_id,
+        nm: entry_example_template.nm,
+        dscp: entry_example_template.dscp,
+        val: entry_example_template.val,
+        amt: entry_example_template.amt,
+        dt: entry_example_template.dt,
+        foreign_id: entry_example_template.foreign_id,
         is_active: 1,
         is_del: 0,
         created_by: jwt_auth.claims.username,
@@ -127,19 +127,14 @@ pub fn add_example_template(
         common::error_message(StatusCode::INTERNAL_SERVER_ERROR, "Connection failed")
     })?;
 
-    let inserted_template = diesel::insert_into(tbl_example_template)
-        .values(&new_template)
+    let inserted = diesel::insert_into(tbl_example_template)
+        .values(&example_template)
         .get_result::<ExampleTemplate>(conn)
         .map_err(|_| {
             common::error_message(StatusCode::INTERNAL_SERVER_ERROR, "Failed to insert")
         })?;
 
-    Ok((
-        StatusCode::CREATED,
-        Json(DataResponse {
-            data: inserted_template,
-        }),
-    ))
+    Ok((StatusCode::CREATED, Json(DataResponse { data: inserted })))
 }
 
 #[handler]
@@ -147,11 +142,11 @@ pub fn update_example_template(
     pool: poem::web::Data<&DbPool>,
     jwt_auth: crate::auth::middleware::JwtAuth,
     Path(example_template_id): Path<i64>,
-    Json(mut update): Json<UpdateExampleTemplate>,
+    Json(mut entry_example_template): Json<EntryExampleTemplate>,
 ) -> poem::Result<impl IntoResponse> {
     validate_id(example_template_id)?;
 
-    if let Err(e) = update.validate() {
+    if let Err(e) = entry_example_template.validate() {
         return Err(validation_error_response(e));
     }
 
@@ -159,16 +154,16 @@ pub fn update_example_template(
         common::error_message(StatusCode::INTERNAL_SERVER_ERROR, "Connection failed")
     })?;
 
-    update.version = update.version + 1;
+    entry_example_template.version = entry_example_template.version + 1;
 
     let updated = diesel::update(
         tbl_example_template
             .filter(id.eq(example_template_id))
-            .filter(version.eq(&update.version - 1)),
+            .filter(version.eq(&entry_example_template.version - 1)),
     )
     // .set(&update)
     .set((
-        &update,
+        &entry_example_template,
         updated_by.eq(Some(jwt_auth.claims.username.clone())),
         dt_updated.eq(Some(Utc::now().naive_utc())),
     ))
