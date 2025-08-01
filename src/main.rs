@@ -8,6 +8,7 @@ mod utils;
 use anyhow::Result;
 use dotenvy::dotenv;
 use poem::http::StatusCode;
+use poem::middleware::Cors;
 use poem::web::{Json, Path};
 use poem::{EndpointExt, Route, Server, get, handler, listener::TcpListener};
 use poem::{IntoResponse, Response, post};
@@ -17,7 +18,6 @@ use std::net::SocketAddr;
 use tokio::{fs, signal};
 
 use crate::auth::jwt::{generate_token, refresh_token};
-use crate::routes::test::test_routes;
 
 // use std::io::{self, Write};
 // io::stdout().flush().unwrap();
@@ -59,13 +59,21 @@ async fn main() -> Result<()> {
 
     let addr = SocketAddr::from(([127, 0, 0, 1], port));
 
+    let cors = Cors::new()
+    // .allow_origin("http://localhost:5173")
+    // .allow_methods([Method::GET, Method::POST])
+    // .allow_headers(["Authorization", "Content-Type"])
+    ;
+
     let app = Route::new()
         .at("", get(hello))
         .at("/:lng/language.json", get(get_language))
         .nest("/generate-token.json", post(generate_token))
         .nest("/refresh-token.json", post(refresh_token))
-        .nest("/test", test_routes())
-        .data(pool);
+        .nest("/main", routes::main::routes())
+        .nest("/test", routes::test::routes())
+        .data(pool)
+        .with(cors);
 
     let listener = TcpListener::bind(addr);
 

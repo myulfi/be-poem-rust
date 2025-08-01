@@ -203,7 +203,7 @@ pub fn delete_example_template(
     }
 }
 
-pub fn test_routes() -> Route {
+pub fn routes() -> Route {
     Route::new()
         .at(
             "/example-template.json",

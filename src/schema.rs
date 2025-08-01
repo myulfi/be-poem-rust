@@ -56,3 +56,23 @@ table! {
         version -> SmallInt,
     }
 }
+
+table! {
+    tbl_mt_menu (id) {
+        id -> SmallInt,
+        nm -> Varchar,
+        icon -> Nullable<Varchar>,
+        seq -> SmallInt,
+        path -> Nullable<Varchar>,
+        mt_menu_parent_id -> SmallInt,
+        color -> Nullable<Varchar>,
+        is_new -> SmallInt,
+        is_blank_target -> SmallInt,
+        is_del -> SmallInt,
+        created_by -> Varchar,
+        dt_created -> Timestamp,
+        updated_by -> Nullable<Varchar>,
+        dt_updated -> Nullable<Timestamp>,
+        version -> SmallInt
+    }
+}
