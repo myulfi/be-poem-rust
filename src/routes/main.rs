@@ -1,77 +1,74 @@
-use crate::models::common::{DataResponse, PaginatedResponse};
-use crate::schema::tbl_example_template::dsl::*;
-use crate::utils::common::{self, validate_id, validation_error_response};
-use crate::{
-    db::DbPool,
-    models::common::Pagination,
-    models::example_template::{EntryExampleTemplate, ExampleTemplate},
-};
-// use bigdecimal::BigDecimal;
-// use bigdecimal::num_bigint::BigInt;
-use chrono::Utc;
+use crate::db::DbPool;
+use crate::models::common::DataResponse;
+use crate::models::master_menu::{MasterMenu, MenuNode};
+use crate::schema::tbl_mt_menu::dsl::*;
+use crate::utils::common::{self};
 use diesel::prelude::*;
 use poem::IntoResponse;
-use poem::web::Query;
-use poem::{
-    Route, get, handler,
-    http::StatusCode,
-    web::{Json},
-};
+use poem::{Route, get, handler, http::StatusCode, web::Json};
 // use validator::Validate;
+
+fn build_menu_tree(data: Vec<MasterMenu>) -> Vec<MenuNode> {
+    use std::collections::HashMap;
+
+    let mut map: HashMap<i16, Vec<MasterMenu>> = HashMap::new();
+
+    // Grouping berdasarkan parent
+    for item in data.into_iter() {
+        map.entry(item.mt_menu_parent_id).or_default().push(item);
+    }
+
+    // Fungsi recursive untuk membangun tree
+    fn build_nodes(parent_id: i16, map: &mut HashMap<i16, Vec<MasterMenu>>) -> Vec<MenuNode> {
+        if let Some(children) = map.remove(&parent_id) {
+            children
+                .into_iter()
+                .map(|item| MenuNode {
+                    id: item.id,
+                    name: item.nm,
+                    icon: item.icon,
+                    sequence: item.seq,
+                    path: item.path,
+                    menu_parent_id: item.mt_menu_parent_id,
+                    color: item.color,
+                    new_flag: item.is_new,
+                    blank_target_flag: item.is_blank_target,
+                    deleted_flag: item.is_del,
+                    created_by: item.created_by,
+                    created_date: item.dt_created,
+                    updated_by: item.updated_by,
+                    updated_date: item.dt_updated,
+                    version: item.version,
+                    children: build_nodes(item.id, map), // ⬅️ rekursif
+                })
+                .collect()
+        } else {
+            vec![]
+        }
+    }
+
+    build_nodes(0, &mut map) // ⬅️ Root: mt_menu_parent_id == 0
+}
 
 #[handler]
 pub fn menu_list(
     pool: poem::web::Data<&DbPool>,
     _: crate::auth::middleware::JwtAuth,
-    Query(pagination): Query<Pagination>,
 ) -> poem::Result<impl IntoResponse> {
-    let start = pagination.start.unwrap_or(0);
-    let length = pagination.length.unwrap_or(10);
-
-    let mut query = tbl_example_template.into_boxed();
-    if let Some(ref term) = pagination.search {
-        query = query.filter(nm.ilike(format!("%{}%", term)));
-    }
-
     let conn = &mut pool.get().map_err(|_| {
         common::error_message(StatusCode::INTERNAL_SERVER_ERROR, "Connection failed")
     })?;
 
-    let total: i64 = match query.count().get_result(conn) {
-        Ok(count) => count,
-        Err(_) => {
-            return Err(common::error_message(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "Not Found",
-            ));
-        }
-    };
+    let data = tbl_mt_menu
+        .filter(is_del.eq(0))
+        // .select(MasterMenu::as_select())
+        .load::<MasterMenu>(conn)
+        .map_err(|_| {
+            common::error_message(StatusCode::INTERNAL_SERVER_ERROR, "Failed to load data")
+        })?;
 
-    if total > 0 {
-        let mut query = tbl_example_template.into_boxed();
-        if let Some(ref term) = pagination.search {
-            query = query.filter(nm.ilike(format!("%{}%", term)));
-        }
-
-        match (pagination.sort.as_deref(), pagination.dir.as_deref()) {
-            (Some("name"), Some("desc")) => query = query.order(nm.desc()),
-            (Some("name"), _) => query = query.order(nm.asc()),
-            (Some("createdDate"), Some("desc")) => query = query.order(dt_created.desc()),
-            (Some("createdDate"), _) => query = query.order(dt_created.asc()),
-            _ => {}
-        }
-
-        let data = query
-            .offset(start)
-            .limit(length)
-            .load::<ExampleTemplate>(conn)
-            .map_err(|_| {
-                common::error_message(StatusCode::INTERNAL_SERVER_ERROR, "Failed to load data")
-            })?;
-        Ok(Json(PaginatedResponse { total, data }))
-    } else {
-        Err(common::error_message(StatusCode::NOT_FOUND, "Not Found"))
-    }
+    let tree = build_menu_tree(data);
+    Ok(Json(DataResponse { data: tree }))
 }
 
 pub fn routes() -> Route {
