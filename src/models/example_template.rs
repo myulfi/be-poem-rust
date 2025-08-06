@@ -56,6 +56,8 @@ pub struct EntryExampleTemplate {
     #[serde(rename = "date")]
     pub dt: Option<NaiveDate>,
     pub foreign_id: Option<i64>,
+    #[serde(rename = "activeFlag")]
+    pub is_active: i16,
     #[serde(default)]
     pub version: i16,
 }
