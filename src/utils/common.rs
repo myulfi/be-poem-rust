@@ -6,6 +6,8 @@ use validator::ValidationErrors;
 use poem::{IntoResponse, Response, Result, error::Error, http::StatusCode, web::Json};
 use serde::Serialize;
 
+use crate::utils::common;
+
 #[derive(Serialize)]
 pub struct MessageResponse {
     message: String,
@@ -46,6 +48,31 @@ pub fn validate_id(id: i64) -> Result<()> {
     } else {
         Err(StatusCode::NOT_FOUND.into())
     }
+}
+
+pub fn validate_ids(ids: &str) -> Result<()> {
+    if ids.len() % 16 == 0 && ids.chars().all(|c| c.is_ascii_digit()) {
+        Ok(())
+    } else {
+        Err(StatusCode::NOT_FOUND.into())
+    }
+}
+
+pub fn parse_ids_from_string(input: &str) -> Result<Vec<i64>> {
+    let mut ids = Vec::new();
+
+    for chunk in input.as_bytes().chunks(16) {
+        let id_str = std::str::from_utf8(chunk)
+            .map_err(|_| common::error_message(StatusCode::BAD_REQUEST, "Invalid UTF-8 ID"))?;
+
+        let id = id_str
+            .parse::<i64>()
+            .map_err(|_| common::error_message(StatusCode::BAD_REQUEST, "Invalid ID number"))?;
+
+        ids.push(id);
+    }
+
+    Ok(ids)
 }
 
 pub fn validation_error_response(e: ValidationErrors) -> poem::Error {

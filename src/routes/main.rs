@@ -6,7 +6,6 @@ use crate::utils::common::{self};
 use diesel::prelude::*;
 use poem::IntoResponse;
 use poem::{Route, get, handler, http::StatusCode, web::Json};
-// use validator::Validate;
 
 fn build_menu_tree(data: Vec<MasterMenu>) -> Vec<MenuNode> {
     use std::collections::HashMap;
@@ -39,7 +38,7 @@ fn build_menu_tree(data: Vec<MasterMenu>) -> Vec<MenuNode> {
                     updated_by: item.updated_by,
                     updated_date: item.dt_updated,
                     version: item.version,
-                    children: build_nodes(item.id, map), // ⬅️ rekursif
+                    children: build_nodes(item.id, map),
                 })
                 .collect()
         } else {
@@ -47,7 +46,7 @@ fn build_menu_tree(data: Vec<MasterMenu>) -> Vec<MenuNode> {
         }
     }
 
-    build_nodes(0, &mut map) // ⬅️ Root: mt_menu_parent_id == 0
+    build_nodes(0, &mut map) // Root: mt_menu_parent_id == 0
 }
 
 #[handler]
@@ -61,7 +60,7 @@ pub fn menu_list(
 
     let data = tbl_mt_menu
         .filter(is_del.eq(0))
-        // .select(MasterMenu::as_select())
+        .order(seq.asc())
         .load::<MasterMenu>(conn)
         .map_err(|_| {
             common::error_message(StatusCode::INTERNAL_SERVER_ERROR, "Failed to load data")

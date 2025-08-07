@@ -1,6 +1,8 @@
 use crate::models::common::{DataResponse, PaginatedResponse};
 use crate::schema::tbl_example_template::dsl::*;
-use crate::utils::common::{self, validate_id, validation_error_response};
+use crate::utils::common::{
+    self, parse_ids_from_string, validate_id, validate_ids, validation_error_response,
+};
 use crate::{
     db::DbPool,
     models::common::Pagination,
@@ -177,15 +179,16 @@ pub fn update_example_template(
 pub fn delete_example_template(
     pool: poem::web::Data<&DbPool>,
     _: crate::auth::middleware::JwtAuth,
-    Path(example_template_id): Path<i64>,
+    Path(example_template_ids): Path<String>,
 ) -> poem::Result<impl IntoResponse> {
-    validate_id(example_template_id)?;
+    validate_ids(&example_template_ids)?;
+    let ids = parse_ids_from_string(&example_template_ids)?;
 
     let conn = &mut pool.get().map_err(|_| {
         common::error_message(StatusCode::INTERNAL_SERVER_ERROR, "Connection failed")
     })?;
 
-    match diesel::delete(tbl_example_template.filter(id.eq(example_template_id))).execute(conn) {
+    match diesel::delete(tbl_example_template.filter(id.eq_any(ids))).execute(conn) {
         Ok(affected_rows) => {
             if affected_rows == 0 {
                 Err(common::error_message(
