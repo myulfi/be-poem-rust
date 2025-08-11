@@ -1,5 +1,6 @@
 mod auth;
 mod db;
+mod facades;
 mod models;
 mod routes;
 mod schema;
@@ -71,6 +72,7 @@ async fn main() -> Result<()> {
         .nest("/generate-token.json", post(generate_token))
         .nest("/refresh-token.json", post(refresh_token))
         .nest("/main", routes::main::routes())
+        .nest("/external", routes::external::routes())
         .nest("/test", routes::test::routes())
         .data(pool)
         .with(cors);

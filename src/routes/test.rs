@@ -28,7 +28,7 @@ pub fn example_template_list(
     Query(pagination): Query<Pagination>,
 ) -> poem::Result<impl IntoResponse> {
     let start = pagination.start.unwrap_or(0);
-    let length = pagination.length.unwrap_or(10);
+    let length = pagination.length.unwrap_or(10).min(100);
 
     let mut query = tbl_example_template.into_boxed();
     if let Some(ref term) = pagination.search {
@@ -72,7 +72,11 @@ pub fn example_template_list(
             })?;
         Ok(Json(PaginatedResponse { total, data }))
     } else {
-        Err(common::error_message(StatusCode::NOT_FOUND, "Not Found"))
+        Ok(Json(PaginatedResponse {
+            total: 0,
+            data: vec![],
+        }))
+        // Err(common::error_message(StatusCode::NOT_FOUND, "Not Found"))
     }
 }
 

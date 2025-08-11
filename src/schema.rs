@@ -76,3 +76,56 @@ table! {
         version -> SmallInt
     }
 }
+
+table! {
+    tbl_ext_database (id) {
+        id -> SmallInt,
+        cd -> Varchar,
+        dscp -> Nullable<Varchar>,
+        mt_database_type_id -> SmallInt,
+        username -> Varchar,
+        password -> Varchar,
+        db_connection -> Varchar,
+        is_lock -> SmallInt,
+        is_del -> SmallInt,
+        created_by -> Varchar,
+        dt_created -> Timestamp,
+        updated_by -> Nullable<Varchar>,
+        dt_updated -> Nullable<Timestamp>,
+        version -> SmallInt,
+    }
+}
+
+table! {
+    tbl_ext_server (id) {
+        id -> SmallInt,
+        cd -> Varchar,
+        dscp -> Nullable<Varchar>,
+        ip -> Varchar,
+        port -> SmallInt,
+        username -> Varchar,
+        password -> Nullable<Varchar>,
+        private_key -> Nullable<Varchar>,
+        is_lock -> SmallInt,
+        is_del -> SmallInt,
+        created_by -> Varchar,
+        dt_created -> Timestamp,
+        updated_by -> Nullable<Varchar>,
+        dt_updated -> Nullable<Timestamp>,
+        version -> SmallInt,
+    }
+}
+
+table! {
+    tbl_ext_api (id) {
+        id -> SmallInt,
+        nm -> Varchar,
+        dscp -> Nullable<Varchar>,
+        is_del -> SmallInt,
+        created_by -> Varchar,
+        dt_created -> Timestamp,
+        updated_by -> Nullable<Varchar>,
+        dt_updated -> Nullable<Timestamp>,
+        version -> SmallInt,
+    }
+}

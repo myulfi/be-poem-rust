@@ -33,13 +33,14 @@ pub fn error_message(status: StatusCode, msg: &str) -> Error {
 pub fn generate_id() -> i64 {
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .unwrap()
+        .unwrap_or_else(|_| std::time::Duration::from_millis(0))
         .as_millis();
 
-    let random = rand::thread_rng().gen_range(1..=999);
-
-    // Combine timestamp and random number
-    format!("{}{:03}", now, random).parse().unwrap()
+    let random = rand::thread_rng().gen_range(0..=999) as u128;
+    let id = now * 1000 + random;
+    let max_safe: u128 = i64::MAX as u128;
+    let safe_id = if id > max_safe { max_safe } else { id };
+    safe_id as i64
 }
 
 pub fn validate_id(id: i64) -> Result<()> {

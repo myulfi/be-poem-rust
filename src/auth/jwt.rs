@@ -74,7 +74,7 @@ fn build_auth_response(
         access_token,
         refresh_token: refresh_tkn,
         user: UserAuthResponse {
-            nm: nick_name.unwrap_or("Guest".to_string()),
+            nm: nick_name.unwrap_or_else(|| "Guest".to_string()),
             role: roles,
         },
     })
@@ -85,8 +85,9 @@ pub fn generate_token(
     pool: poem::web::Data<&DbPool>,
     Json(login): Json<Login>,
 ) -> Result<Json<AuthResponse>, poem::Error> {
-    let conn: &mut diesel::r2d2::PooledConnection<diesel::r2d2::ConnectionManager<PgConnection>> =
-        &mut pool.get().unwrap();
+    let conn = &mut pool.get().map_err(|_| {
+        common::error_message(StatusCode::INTERNAL_SERVER_ERROR, "Connection failed")
+    })?;
 
     let user = tbl_user
         .filter(username.eq(&login.username))
@@ -112,7 +113,10 @@ pub fn refresh_token(
     pool: poem::web::Data<&DbPool>,
     jwt_auth: crate::auth::middleware::JwtAuth,
 ) -> Result<Json<AuthResponse>, poem::Error> {
-    let conn = &mut pool.get().unwrap();
+    let conn = &mut pool.get().map_err(|_| {
+        common::error_message(StatusCode::INTERNAL_SERVER_ERROR, "Connection failed")
+    })?;
+
     let user = tbl_user
         .filter(username.eq(&jwt_auth.claims.username))
         .first::<User>(conn)
