@@ -13,6 +13,7 @@ pub fn routes() -> Route {
                 .patch(database::update)
                 .delete(database::delete),
         )
+        .at("/database-test-connection.json", get(database::manual_list))
         .at("/server.json", get(server::list).post(server::add))
         .at(
             "/:id/server.json",

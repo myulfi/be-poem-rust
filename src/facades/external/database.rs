@@ -12,6 +12,9 @@ use poem::{
     http::StatusCode,
     web::{Json, Path},
 };
+use rust_decimal::Decimal;
+use serde_json::{Map, Value};
+use tokio_postgres::NoTls;
 use validator::Validate;
 
 #[handler]
@@ -203,4 +206,106 @@ pub fn delete(
         .map_err(|_| common::error_message(StatusCode::NOT_FOUND, "Failed to update"))?;
 
     Ok(StatusCode::NO_CONTENT)
+}
+
+#[handler]
+pub async fn manual_list() -> poem::Result<impl IntoResponse> {
+    // Connect ke database
+    let (client, connection) = tokio_postgres::connect(
+        "host=localhost user=postgres password=Password*123 dbname=main_db",
+        NoTls,
+    )
+    .await
+    .map_err(|e| {
+        eprintln!("Database connection error: {}", e);
+        poem::Error::from_status(StatusCode::INTERNAL_SERVER_ERROR)
+    })?;
+
+    // Jalankan koneksi di background
+    tokio::spawn(async move {
+        if let Err(e) = connection.await {
+            eprintln!("Connection error: {}", e);
+        }
+    });
+
+    // Eksekusi query
+    let rows = client
+        .query("SELECT * FROM tbl_example_template", &[])
+        .await
+        .map_err(|e| {
+            eprintln!("Query error: {}", e);
+            poem::Error::from_status(StatusCode::INTERNAL_SERVER_ERROR)
+        })?;
+
+    // Bangun JSON response
+    let mut results = Vec::new();
+    for row in &rows {
+        let mut map = Map::new();
+
+        for (i, column) in row.columns().iter().enumerate() {
+            let name = column.name();
+
+            let value = match column.type_().name() {
+                "int2" => {
+                    let v: i16 = row.get(i);
+                    Value::Number((v as i64).into())
+                }
+                "int4" => {
+                    let v: i32 = row.get(i);
+                    Value::Number((v as i64).into())
+                }
+                "int8" => {
+                    let v: Option<i64> = row.get(i);
+                    match v {
+                        Some(val) => Value::Number(val.into()),
+                        None => Value::Null,
+                    }
+                }
+                "float4" | "float8" => {
+                    let v: f64 = row.get(i);
+                    serde_json::Number::from_f64(v)
+                        .map(Value::Number)
+                        .unwrap_or(Value::Null)
+                }
+                "numeric" => {
+                    let v: Option<Decimal> = row.get(i);
+                    match v {
+                        Some(v) => Value::String(v.to_string()),
+                        None => Value::Null,
+                    }
+                }
+                "bool" => {
+                    let v: bool = row.get(i);
+                    Value::Bool(v)
+                }
+                "date" => {
+                    let val: Option<String> = row.try_get(i).ok();
+                    match val {
+                        Some(s) => Value::String(s),
+                        None => Value::Null,
+                    }
+                }
+                "timestamp" => {
+                    let val: Option<String> = row.try_get(i).ok();
+                    match val {
+                        Some(s) => Value::String(s),
+                        None => Value::Null,
+                    }
+                }
+                _ => {
+                    let v: Option<String> = row.get(i);
+                    match v {
+                        Some(s) => Value::String(s),
+                        None => Value::Null,
+                    }
+                }
+            };
+
+            map.insert(name.to_string(), value);
+        }
+
+        results.push(Value::Object(map));
+    }
+
+    Ok(Json(Value::Array(results)))
 }
