@@ -2,7 +2,7 @@ use crate::facades::external::api;
 use crate::facades::external::database;
 use crate::facades::external::server;
 
-use poem::{Route, get};
+use poem::{Route, get, post};
 
 pub fn routes() -> Route {
     Route::new()
@@ -14,6 +14,14 @@ pub fn routes() -> Route {
                 .delete(database::delete),
         )
         .at("/database-test-connection.json", get(database::manual_list))
+        .at(
+            "/:id/database-query-manual.json",
+            post(database::query_manual),
+        )
+        .at(
+            "/:id/database-query-manual-list.json",
+            get(database::query_manual_list),
+        )
         .at("/server.json", get(server::list).post(server::add))
         .at(
             "/:id/server.json",

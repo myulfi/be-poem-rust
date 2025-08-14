@@ -97,6 +97,19 @@ table! {
 }
 
 table! {
+    tbl_query_manual (id) {
+        id -> BigInt,
+        ext_database_id -> SmallInt,
+        query -> Varchar,
+        created_by -> Varchar,
+        dt_created -> Timestamp,
+        updated_by -> Nullable<Varchar>,
+        dt_updated -> Nullable<Timestamp>,
+        version -> SmallInt,
+    }
+}
+
+table! {
     tbl_ext_server (id) {
         id -> SmallInt,
         cd -> Varchar,

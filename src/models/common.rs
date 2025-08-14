@@ -19,3 +19,9 @@ pub struct PaginatedResponse<T> {
 pub struct DataResponse<T> {
     pub data: T,
 }
+
+#[derive(Serialize)]
+pub struct HeaderResponse<T> {
+    pub id: i64,
+    pub header: T,
+}

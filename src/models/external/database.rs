@@ -60,3 +60,26 @@ pub struct EntryExternalDatabase {
     #[serde(default)]
     pub version: i16,
 }
+
+#[derive(Insertable, Queryable, Serialize)]
+#[serde(rename_all = "camelCase")]
+#[diesel(table_name = crate::schema::tbl_query_manual)]
+pub struct QueryManual {
+    pub id: i64,
+    #[serde(rename = "externalDatabaseId")]
+    pub ext_database_id: i16,
+    pub query: String,
+    pub created_by: String,
+    #[serde(rename = "createdDate")]
+    pub dt_created: NaiveDateTime,
+    pub updated_by: Option<String>,
+    #[serde(rename = "updatedDate")]
+    pub dt_updated: Option<NaiveDateTime>,
+    pub version: i16,
+}
+
+#[derive(Queryable, Serialize, Deserialize, Validate)]
+#[serde(rename_all = "camelCase")]
+pub struct EntryQueryManual {
+    pub query: String,
+}

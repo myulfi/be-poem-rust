@@ -1,7 +1,10 @@
-use crate::models::common::{DataResponse, PaginatedResponse};
-use crate::models::external::database::{EntryExternalDatabase, ExternalDatabase};
+use crate::models::common::{DataResponse, HeaderResponse, PaginatedResponse};
+use crate::models::external::database::{
+    EntryExternalDatabase, EntryQueryManual, ExternalDatabase, QueryManual,
+};
 use crate::schema::tbl_ext_database::dsl::*;
-use crate::utils::common::{self, validation_error_response};
+use crate::schema::tbl_query_manual;
+use crate::utils::common::{self, convert_to_count_query, validate_id, validation_error_response};
 use crate::{db::DbPool, models::common::Pagination};
 use chrono::Utc;
 use diesel::prelude::*;
@@ -308,4 +311,241 @@ pub async fn manual_list() -> poem::Result<impl IntoResponse> {
     }
 
     Ok(Json(Value::Array(results)))
+    // Ok(Json(DataResponse { data: ext_database }))
+}
+
+#[handler]
+pub async fn query_manual(
+    pool: poem::web::Data<&DbPool>,
+    jwt_auth: crate::auth::middleware::JwtAuth,
+    Path(ext_database_id): Path<i16>,
+    Json(mut entry_manual_ext_database): Json<EntryQueryManual>,
+) -> poem::Result<impl IntoResponse> {
+    let conn = &mut pool.get().map_err(|_| {
+        common::error_message(StatusCode::INTERNAL_SERVER_ERROR, "Connection failed")
+    })?;
+
+    let ext_database = tbl_ext_database
+        .filter(id.eq(ext_database_id))
+        .first::<ExternalDatabase>(conn)
+        .map_err(|_| common::error_message(StatusCode::NOT_FOUND, "Not Found"))?;
+
+    let connection_str = format!(
+        "postgres://{}:{}@{}",
+        ext_database.username, ext_database.password, ext_database.db_connection
+    );
+
+    // "postgres://postgres:Password*123@localhost/main_db"
+    let (client, connection) = tokio_postgres::connect(&connection_str, NoTls)
+        .await
+        .map_err(|e| {
+            eprintln!("Database connection error: {}", e);
+            poem::Error::from_status(StatusCode::INTERNAL_SERVER_ERROR)
+        })?;
+
+    // Jalankan koneksi di background
+    tokio::spawn(async move {
+        if let Err(e) = connection.await {
+            eprintln!("Connection error: {}", e);
+        }
+    });
+
+    let rows = client
+        .query(&entry_manual_ext_database.query, &[])
+        .await
+        .map_err(|e| {
+            eprintln!("Query error: {}", e);
+            poem::Error::from_status(StatusCode::INTERNAL_SERVER_ERROR)
+        })?;
+
+    // Bangun array hasil dengan hanya {columnName, columnType}
+    let mut columns_info = Vec::new();
+
+    if let Some(row) = rows.get(0) {
+        for column in row.columns() {
+            let mut map = Map::new();
+            map.insert("name".to_string(), Value::String(column.name().to_string()));
+            map.insert(
+                "type".to_string(),
+                Value::String(column.type_().name().to_string()),
+            );
+            columns_info.push(Value::Object(map));
+        }
+    }
+
+    let query_manual = QueryManual {
+        id: common::generate_id(),
+        ext_database_id: ext_database.id,
+        query: entry_manual_ext_database.query,
+        created_by: jwt_auth.claims.username,
+        dt_created: Utc::now().naive_utc(),
+        updated_by: None,
+        dt_updated: None,
+        version: 0,
+    };
+
+    let inserted = diesel::insert_into(tbl_query_manual::table)
+        .values(&query_manual)
+        .get_result::<QueryManual>(conn)
+        .map_err(|_| {
+            common::error_message(StatusCode::INTERNAL_SERVER_ERROR, "Failed to insert")
+        })?;
+
+    Ok(Json(HeaderResponse {
+        id: inserted.id,
+        header: Value::Array(columns_info),
+    }))
+    // Ok(Json(DataResponse { data: ext_database }))
+}
+
+#[handler]
+pub async fn query_manual_list(
+    pool: poem::web::Data<&DbPool>,
+    _: crate::auth::middleware::JwtAuth,
+    Path(query_manual_id): Path<i64>,
+    Query(pagination): Query<Pagination>,
+) -> poem::Result<impl IntoResponse> {
+    validate_id(query_manual_id)?;
+    let start = pagination.start.unwrap_or(0);
+    let length = pagination.length.unwrap_or(10).min(100);
+
+    let conn = &mut pool.get().map_err(|_| {
+        common::error_message(StatusCode::INTERNAL_SERVER_ERROR, "Connection failed")
+    })?;
+
+    let query_manual_2 = tbl_query_manual::table
+        .filter(tbl_query_manual::id.eq(query_manual_id))
+        .first::<QueryManual>(conn)
+        .map_err(|_| common::error_message(StatusCode::NOT_FOUND, "Not Found"))?;
+
+    let ext_database = tbl_ext_database
+        .filter(id.eq(query_manual_2.ext_database_id))
+        .first::<ExternalDatabase>(conn)
+        .map_err(|_| common::error_message(StatusCode::NOT_FOUND, "Not Found"))?;
+
+    let connection_str = format!(
+        "postgres://{}:{}@{}",
+        ext_database.username, ext_database.password, ext_database.db_connection
+    );
+
+    let (client, connection) = tokio_postgres::connect(&connection_str, NoTls)
+        .await
+        .map_err(|e| {
+            eprintln!("Database connection error: {}", e);
+            poem::Error::from_status(StatusCode::INTERNAL_SERVER_ERROR)
+        })?;
+
+    // Jalankan koneksi di background
+    tokio::spawn(async move {
+        if let Err(e) = connection.await {
+            eprintln!("Connection error: {}", e);
+        }
+    });
+
+    if let Some(count_query) = convert_to_count_query(&query_manual_2.query) {
+        let row = match client.query_one(&count_query, &[]).await {
+            Ok(row) => row,
+            Err(_) => {
+                return Err(common::error_message(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "Not Found",
+                ));
+            }
+        };
+
+        let total: i64 = row.get(0);
+        if total > 0 {
+            let paginated_query = format!(
+                "{0} OFFSET {1} ROWS FETCH NEXT {2} ROWS ONLY",
+                &query_manual_2.query, start, length
+            );
+            let rows = client.query(&paginated_query, &[]).await.map_err(|e| {
+                eprintln!("Query error: {}", e);
+                poem::Error::from_status(StatusCode::INTERNAL_SERVER_ERROR)
+            })?;
+
+            let mut results = Vec::new();
+            for row in &rows {
+                let mut map = Map::new();
+
+                for (i, column) in row.columns().iter().enumerate() {
+                    let name = column.name();
+
+                    let value = match column.type_().name() {
+                        "int2" => {
+                            let v: i16 = row.get(i);
+                            Value::Number((v as i64).into())
+                        }
+                        "int4" => {
+                            let v: i32 = row.get(i);
+                            Value::Number((v as i64).into())
+                        }
+                        "int8" => {
+                            let v: Option<i64> = row.get(i);
+                            match v {
+                                Some(val) => Value::Number(val.into()),
+                                None => Value::Null,
+                            }
+                        }
+                        "float4" | "float8" => {
+                            let v: f64 = row.get(i);
+                            serde_json::Number::from_f64(v)
+                                .map(Value::Number)
+                                .unwrap_or(Value::Null)
+                        }
+                        "numeric" => {
+                            let v: Option<Decimal> = row.get(i);
+                            match v {
+                                Some(v) => Value::String(v.to_string()),
+                                None => Value::Null,
+                            }
+                        }
+                        "bool" => {
+                            let v: bool = row.get(i);
+                            Value::Bool(v)
+                        }
+                        "date" => {
+                            let val: Option<String> = row.try_get(i).ok();
+                            match val {
+                                Some(s) => Value::String(s),
+                                None => Value::Null,
+                            }
+                        }
+                        "timestamp" => {
+                            let val: Option<String> = row.try_get(i).ok();
+                            match val {
+                                Some(s) => Value::String(s),
+                                None => Value::Null,
+                            }
+                        }
+                        _ => {
+                            let v: Option<String> = row.get(i);
+                            match v {
+                                Some(s) => Value::String(s),
+                                None => Value::Null,
+                            }
+                        }
+                    };
+
+                    map.insert(name.to_string(), value);
+                }
+
+                results.push(Value::Object(map));
+            }
+            Ok(Json(PaginatedResponse {
+                total: total as i64,
+                data: results,
+            }))
+        } else {
+            Ok(Json(PaginatedResponse {
+                total: 0,
+                data: vec![],
+            }))
+        }
+    } else {
+        Ok(Json(PaginatedResponse {
+            total: 0,
+            data: vec![],
+        }))
+    }
 }
