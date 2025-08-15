@@ -211,6 +211,7 @@ pub fn delete(
     Ok(StatusCode::NO_CONTENT)
 }
 
+// enggal dipakai
 #[handler]
 pub async fn manual_list() -> poem::Result<impl IntoResponse> {
     // Connect ke database
@@ -315,7 +316,40 @@ pub async fn manual_list() -> poem::Result<impl IntoResponse> {
 }
 
 #[handler]
-pub async fn query_manual(
+pub async fn connect(
+    pool: poem::web::Data<&DbPool>,
+    _: crate::auth::middleware::JwtAuth,
+    Path(database_id): Path<i16>,
+) -> poem::Result<impl IntoResponse> {
+    let conn = &mut pool.get().map_err(|_| {
+        common::error_message(StatusCode::INTERNAL_SERVER_ERROR, "Connection failed")
+    })?;
+
+    let ext_database = tbl_ext_database
+        .filter(id.eq(database_id))
+        .first::<ExternalDatabase>(conn)
+        .map_err(|_| common::error_message(StatusCode::NOT_FOUND, "Not Found"))?;
+
+    let connection_str = format!(
+        "postgres://{}:{}@{}",
+        ext_database.username, ext_database.password, ext_database.db_connection
+    );
+
+    let _ = tokio_postgres::connect(&connection_str, NoTls)
+        .await
+        .map_err(|e| {
+            eprintln!("Database connection error: {}", e);
+            common::error_message(
+                StatusCode::BAD_GATEWAY,
+                "Failed Connect to External Database",
+            )
+        })?;
+
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[handler]
+pub async fn query_manual_run(
     pool: poem::web::Data<&DbPool>,
     jwt_auth: crate::auth::middleware::JwtAuth,
     Path(ext_database_id): Path<i16>,
@@ -548,4 +582,124 @@ pub async fn query_manual_list(
             data: vec![],
         }))
     }
+}
+
+#[handler]
+pub async fn query_manual_all_list(
+    pool: poem::web::Data<&DbPool>,
+    _: crate::auth::middleware::JwtAuth,
+    Path(query_manual_id): Path<i64>,
+) -> poem::Result<impl IntoResponse> {
+    validate_id(query_manual_id)?;
+
+    let conn = &mut pool.get().map_err(|_| {
+        common::error_message(StatusCode::INTERNAL_SERVER_ERROR, "Connection failed")
+    })?;
+
+    let query_manual_2 = tbl_query_manual::table
+        .filter(tbl_query_manual::id.eq(query_manual_id))
+        .first::<QueryManual>(conn)
+        .map_err(|_| common::error_message(StatusCode::NOT_FOUND, "Not Found"))?;
+
+    let ext_database = tbl_ext_database
+        .filter(id.eq(query_manual_2.ext_database_id))
+        .first::<ExternalDatabase>(conn)
+        .map_err(|_| common::error_message(StatusCode::NOT_FOUND, "Not Found"))?;
+
+    let connection_str = format!(
+        "postgres://{}:{}@{}",
+        ext_database.username, ext_database.password, ext_database.db_connection
+    );
+
+    let (client, connection) = tokio_postgres::connect(&connection_str, NoTls)
+        .await
+        .map_err(|e| {
+            eprintln!("Database connection error: {}", e);
+            poem::Error::from_status(StatusCode::INTERNAL_SERVER_ERROR)
+        })?;
+
+    // Jalankan koneksi di background
+    tokio::spawn(async move {
+        if let Err(e) = connection.await {
+            eprintln!("Connection error: {}", e);
+        }
+    });
+
+    let rows = client
+        .query(&query_manual_2.query, &[])
+        .await
+        .map_err(|e| {
+            eprintln!("Query error: {}", e);
+            poem::Error::from_status(StatusCode::INTERNAL_SERVER_ERROR)
+        })?;
+
+    let mut results = Vec::new();
+    for row in &rows {
+        let mut map = Map::new();
+
+        for (i, column) in row.columns().iter().enumerate() {
+            let name = column.name();
+
+            let value = match column.type_().name() {
+                "int2" => {
+                    let v: i16 = row.get(i);
+                    Value::Number((v as i64).into())
+                }
+                "int4" => {
+                    let v: i32 = row.get(i);
+                    Value::Number((v as i64).into())
+                }
+                "int8" => {
+                    let v: Option<i64> = row.get(i);
+                    match v {
+                        Some(val) => Value::Number(val.into()),
+                        None => Value::Null,
+                    }
+                }
+                "float4" | "float8" => {
+                    let v: f64 = row.get(i);
+                    serde_json::Number::from_f64(v)
+                        .map(Value::Number)
+                        .unwrap_or(Value::Null)
+                }
+                "numeric" => {
+                    let v: Option<Decimal> = row.get(i);
+                    match v {
+                        Some(v) => Value::String(v.to_string()),
+                        None => Value::Null,
+                    }
+                }
+                "bool" => {
+                    let v: bool = row.get(i);
+                    Value::Bool(v)
+                }
+                "date" => {
+                    let val: Option<String> = row.try_get(i).ok();
+                    match val {
+                        Some(s) => Value::String(s),
+                        None => Value::Null,
+                    }
+                }
+                "timestamp" => {
+                    let val: Option<String> = row.try_get(i).ok();
+                    match val {
+                        Some(s) => Value::String(s),
+                        None => Value::Null,
+                    }
+                }
+                _ => {
+                    let v: Option<String> = row.get(i);
+                    match v {
+                        Some(s) => Value::String(s),
+                        None => Value::Null,
+                    }
+                }
+            };
+
+            map.insert(name.to_string(), value);
+        }
+
+        results.push(Value::Object(map));
+    }
+    Ok(Json(DataResponse { data: results }))
 }

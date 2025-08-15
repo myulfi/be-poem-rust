@@ -13,14 +13,18 @@ pub fn routes() -> Route {
                 .patch(database::update)
                 .delete(database::delete),
         )
-        .at("/database-test-connection.json", get(database::manual_list))
+        .at("/:id/database-connect.json", get(database::connect))
         .at(
-            "/:id/database-query-manual.json",
-            post(database::query_manual),
+            "/:id/database-query-manual-run.json",
+            post(database::query_manual_run),
         )
         .at(
             "/:id/database-query-manual-list.json",
             get(database::query_manual_list),
+        )
+        .at(
+            "/:id/database-query-manual-all-list.json",
+            get(database::query_manual_all_list),
         )
         .at("/server.json", get(server::list).post(server::add))
         .at(
