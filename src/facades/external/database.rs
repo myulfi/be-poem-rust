@@ -18,7 +18,7 @@ use poem::{
     http::StatusCode,
     web::{Json, Path},
 };
-use serde_json::Value;
+use serde_json::{Value, json};
 use tokio_postgres::NoTls;
 use validator::Validate;
 
@@ -522,16 +522,23 @@ pub async fn query_manual_run(
         }
     });
 
-    let rows = client
-        .query(&entry_manual_ext_database.query, &[])
-        .await
-        .map_err(|e| {
-            eprintln!("Query error: {}", e);
-            poem::Error::from_status(StatusCode::INTERNAL_SERVER_ERROR)
-        })?;
+    let query = format!("{0} LIMIT 1", entry_manual_ext_database.query);
+    let rows = client.query(&query, &[]).await;
 
-    let columns_info = extract_columns_info(&rows);
-    // let columns_info = extract_columns_info(&rows).unwrap_or_default();
+    let columns_info = match rows {
+        Ok(rows) => {
+            println!("{:?}", rows.len());
+            extract_columns_info(&rows)
+        }
+        Err(e) => {
+            let error_response = json!({
+                "data": [
+                    { "error": format!("{}", e) }
+                ]
+            });
+            return Ok(Json(error_response));
+        }
+    };
 
     let inserted = diesel::insert_into(tbl_query_manual::table)
         .values(QueryManual {
@@ -553,10 +560,16 @@ pub async fn query_manual_run(
             )
         })?;
 
-    Ok(Json(HeaderResponse {
-        id: inserted.id,
-        header: Value::Array(columns_info),
-    }))
+    // Ok(Json(HeaderResponse {
+    //     id: inserted.id,
+    //     header: Value::Array(columns_info),
+    // }))
+    let success_response = json!({
+        "id": inserted.id,
+        "header": columns_info
+    });
+
+    Ok(Json(success_response))
     // Ok(Json(DataResponse { data: ext_database }))
 }
 
