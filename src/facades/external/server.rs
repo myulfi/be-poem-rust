@@ -29,15 +29,19 @@ pub fn list(
     }
 
     let conn = &mut pool.get().map_err(|_| {
-        common::error_message(StatusCode::INTERNAL_SERVER_ERROR, "Connection failed")
+        common::error_message(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "information.connectionFailed",
+        )
     })?;
 
     let total: i64 = match query.count().get_result(conn) {
         Ok(count) => count,
-        Err(_) => {
+        Err(e) => {
+            eprintln!("Counting error: {}", e);
             return Err(common::error_message(
                 StatusCode::INTERNAL_SERVER_ERROR,
-                "Not Found",
+                "information.internalServerError",
             ));
         }
     };
@@ -60,8 +64,12 @@ pub fn list(
             .offset(start)
             .limit(length)
             .load::<ExternalServer>(conn)
-            .map_err(|_| {
-                common::error_message(StatusCode::INTERNAL_SERVER_ERROR, "Failed to load data")
+            .map_err(|e| {
+                eprintln!("Loading error: {}", e);
+                common::error_message(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "information.internalServerError",
+                )
             })?;
         Ok(Json(PaginatedResponse { total, data }))
     } else {
@@ -79,13 +87,16 @@ pub fn get(
     Path(ext_server_id): Path<i16>,
 ) -> poem::Result<impl IntoResponse> {
     let conn = &mut pool.get().map_err(|_| {
-        common::error_message(StatusCode::INTERNAL_SERVER_ERROR, "Connection failed")
+        common::error_message(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "information.connectionFailed",
+        )
     })?;
 
     let ext_server = tbl_ext_server
         .filter(id.eq(ext_server_id))
         .first::<ExternalServer>(conn)
-        .map_err(|_| common::error_message(StatusCode::NOT_FOUND, "Not Found"))?;
+        .map_err(|_| common::error_message(StatusCode::NOT_FOUND, "information.notFound"))?;
 
     Ok(Json(DataResponse { data: ext_server }))
 }
@@ -101,16 +112,20 @@ pub fn add(
     }
 
     let conn = &mut pool.get().map_err(|_| {
-        common::error_message(StatusCode::INTERNAL_SERVER_ERROR, "Connection failed")
+        common::error_message(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "information.connectionFailed",
+        )
     })?;
 
     let max_id: Option<i16> = tbl_ext_server
         .select(diesel::dsl::max(id))
         .first(conn)
-        .map_err(|_| {
+        .map_err(|e| {
+            eprintln!("Loading error: {}", e);
             common::error_message(
                 poem::http::StatusCode::INTERNAL_SERVER_ERROR,
-                "Failed to get max ID",
+                "information.internalServerError",
             )
         })?;
 
@@ -138,15 +153,20 @@ pub fn add(
         let inserted = diesel::insert_into(tbl_ext_server)
             .values(&ext_server)
             .get_result::<ExternalServer>(conn)
-            .map_err(|_| {
-                common::error_message(StatusCode::INTERNAL_SERVER_ERROR, "Failed to insert")
+            .map_err(|e| {
+                eprintln!("Inserting error: {}", e);
+                common::error_message(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "information.internalServerError",
+                )
             })?;
 
         Ok((StatusCode::CREATED, Json(DataResponse { data: inserted })))
     } else {
+        eprintln!("ID limit reached");
         Err(common::error_message(
-            poem::http::StatusCode::INTERNAL_SERVER_ERROR,
-            "ID limit reached",
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "information.internalServerError",
         ))
     }
 }
@@ -163,7 +183,10 @@ pub fn update(
     }
 
     let conn = &mut pool.get().map_err(|_| {
-        common::error_message(StatusCode::INTERNAL_SERVER_ERROR, "Connection failed")
+        common::error_message(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "information.connectionFailed",
+        )
     })?;
 
     entry_ext_server.version = entry_ext_server.version + 1;
@@ -179,7 +202,13 @@ pub fn update(
         dt_updated.eq(Some(Utc::now().naive_utc())),
     ))
     .get_result::<ExternalServer>(conn)
-    .map_err(|_| common::error_message(StatusCode::NOT_FOUND, "Failed to update"))?;
+    .map_err(|e| {
+        eprintln!("Updating error: {}", e);
+        common::error_message(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "information.internalServerError",
+        )
+    })?;
 
     Ok(Json(DataResponse { data: updated }))
 }
@@ -191,7 +220,10 @@ pub fn delete(
     Path(ext_server_id): Path<i16>,
 ) -> poem::Result<impl IntoResponse> {
     let conn = &mut pool.get().map_err(|_| {
-        common::error_message(StatusCode::INTERNAL_SERVER_ERROR, "Connection failed")
+        common::error_message(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "information.connectionFailed",
+        )
     })?;
 
     diesel::update(tbl_ext_server.filter(id.eq(ext_server_id)))
@@ -201,7 +233,13 @@ pub fn delete(
             dt_updated.eq(Some(Utc::now().naive_utc())),
         ))
         .get_result::<ExternalServer>(conn)
-        .map_err(|_| common::error_message(StatusCode::NOT_FOUND, "Failed to update"))?;
+        .map_err(|e| {
+            eprintln!("Soft Deleting error: {}", e);
+            common::error_message(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "information.internalServerError",
+            )
+        })?;
 
     Ok(StatusCode::NO_CONTENT)
 }

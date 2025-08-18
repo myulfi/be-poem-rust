@@ -36,15 +36,19 @@ pub fn list(
     }
 
     let conn = &mut pool.get().map_err(|_| {
-        common::error_message(StatusCode::INTERNAL_SERVER_ERROR, "Connection failed")
+        common::error_message(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "information.connectionFailed",
+        )
     })?;
 
     let total: i64 = match query.count().get_result(conn) {
         Ok(count) => count,
-        Err(_) => {
+        Err(e) => {
+            eprintln!("Counting error: {}", e);
             return Err(common::error_message(
                 StatusCode::INTERNAL_SERVER_ERROR,
-                "Not Found",
+                "information.internalServerError",
             ));
         }
     };
@@ -67,8 +71,12 @@ pub fn list(
             .offset(start)
             .limit(length)
             .load::<ExampleTemplate>(conn)
-            .map_err(|_| {
-                common::error_message(StatusCode::INTERNAL_SERVER_ERROR, "Failed to load data")
+            .map_err(|e| {
+                eprintln!("Loading error: {}", e);
+                common::error_message(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "information.internalServerError",
+                )
             })?;
         Ok(Json(PaginatedResponse { total, data }))
     } else {
@@ -89,13 +97,16 @@ pub fn get(
     validate_id(example_template_id)?;
 
     let conn = &mut pool.get().map_err(|_| {
-        common::error_message(StatusCode::INTERNAL_SERVER_ERROR, "Connection failed")
+        common::error_message(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "information.connectionFailed",
+        )
     })?;
 
     let example_template = tbl_example_template
         .filter(id.eq(example_template_id))
         .first::<ExampleTemplate>(conn)
-        .map_err(|_| common::error_message(StatusCode::NOT_FOUND, "Not Found"))?;
+        .map_err(|_| common::error_message(StatusCode::NOT_FOUND, "information.notFound"))?;
 
     Ok(Json(DataResponse {
         data: example_template,
@@ -130,14 +141,21 @@ pub fn add(
     };
 
     let conn = &mut pool.get().map_err(|_| {
-        common::error_message(StatusCode::INTERNAL_SERVER_ERROR, "Connection failed")
+        common::error_message(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "information.connectionFailed",
+        )
     })?;
 
     let inserted = diesel::insert_into(tbl_example_template)
         .values(&example_template)
         .get_result::<ExampleTemplate>(conn)
-        .map_err(|_| {
-            common::error_message(StatusCode::INTERNAL_SERVER_ERROR, "Failed to insert")
+        .map_err(|e| {
+            eprintln!("Inserting error: {}", e);
+            common::error_message(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "information.internalServerError",
+            )
         })?;
 
     Ok((StatusCode::CREATED, Json(DataResponse { data: inserted })))
@@ -157,7 +175,10 @@ pub fn update(
     }
 
     let conn = &mut pool.get().map_err(|_| {
-        common::error_message(StatusCode::INTERNAL_SERVER_ERROR, "Connection failed")
+        common::error_message(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "information.connectionFailed",
+        )
     })?;
 
     entry_example_template.version = entry_example_template.version + 1;
@@ -174,7 +195,13 @@ pub fn update(
         dt_updated.eq(Some(Utc::now().naive_utc())),
     ))
     .get_result::<ExampleTemplate>(conn)
-    .map_err(|_| common::error_message(StatusCode::NOT_FOUND, "Failed to update"))?;
+    .map_err(|e| {
+        eprintln!("Updating error: {}", e);
+        common::error_message(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "information.internalServerError",
+        )
+    })?;
 
     Ok(Json(DataResponse { data: updated }))
 }
@@ -189,7 +216,10 @@ pub fn delete(
     let ids = parse_ids_from_string(&example_template_ids)?;
 
     let conn = &mut pool.get().map_err(|_| {
-        common::error_message(StatusCode::INTERNAL_SERVER_ERROR, "Connection failed")
+        common::error_message(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "information.connectionFailed",
+        )
     })?;
 
     match diesel::delete(tbl_example_template.filter(id.eq_any(ids))).execute(conn) {
@@ -197,15 +227,18 @@ pub fn delete(
             if affected_rows == 0 {
                 Err(common::error_message(
                     StatusCode::NOT_FOUND,
-                    "No Data found",
+                    "information.notFound",
                 ))
             } else {
                 Ok(StatusCode::NO_CONTENT)
             }
         }
-        Err(_) => Err(common::error_message(
-            StatusCode::NOT_FOUND,
-            "Failed to update",
-        )),
+        Err(e) => {
+            eprintln!("Deleting error: {}", e);
+            return Err(common::error_message(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "information.internalServerError",
+            ));
+        }
     }
 }

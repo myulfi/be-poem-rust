@@ -1,12 +1,13 @@
 use rand::Rng;
-use serde_json::json;
+use serde_json::{Map, Value, json};
 use std::time::{SystemTime, UNIX_EPOCH};
+use tokio_postgres::Row;
 use validator::ValidationErrors;
 
+use crate::utils::common;
 use poem::{IntoResponse, Response, Result, error::Error, http::StatusCode, web::Json};
 use serde::Serialize;
-
-use crate::utils::common;
+use tokio_postgres::types::Oid;
 
 #[derive(Serialize)]
 pub struct MessageResponse {
@@ -147,3 +148,112 @@ pub fn convert_to_count_query(raw_query: &str) -> Option<String> {
     let result = format!("SELECT COUNT(*){}", clean_clause);
     Some(result)
 }
+
+pub fn rows_to_json(rows: &[Row]) -> Vec<Value> {
+    let mut results = Vec::new();
+
+    for row in rows {
+        let mut map = Map::new();
+
+        for (i, column) in row.columns().iter().enumerate() {
+            let name = column.name();
+
+            let value = match column.type_().name() {
+                "oid" => {
+                    let v: Option<Oid> = row.try_get(i).ok();
+                    match v {
+                        Some(oid) => Value::Number((oid as i64).into()),
+                        None => Value::Null,
+                    }
+                }
+                "int2" => {
+                    let v: i16 = row.get(i);
+                    Value::Number((v as i64).into())
+                }
+                "int4" => {
+                    let v: i32 = row.get(i);
+                    Value::Number((v as i64).into())
+                }
+                "int8" => {
+                    let v: Option<i64> = row.get(i);
+                    match v {
+                        Some(val) => Value::Number(val.into()),
+                        None => Value::Null,
+                    }
+                }
+                "float4" | "float8" => {
+                    let v: f64 = row.get(i);
+                    serde_json::Number::from_f64(v)
+                        .map(Value::Number)
+                        .unwrap_or(Value::Null)
+                }
+                "numeric" => {
+                    let v: Option<rust_decimal::Decimal> = row.get(i);
+                    match v {
+                        Some(val) => Value::String(val.to_string()),
+                        None => Value::Null,
+                    }
+                }
+                "bool" => {
+                    let v: bool = row.get(i);
+                    Value::Bool(v)
+                }
+                "date" | "timestamp" => {
+                    let val: Option<String> = row.try_get(i).ok();
+                    match val {
+                        Some(s) => Value::String(s),
+                        None => Value::Null,
+                    }
+                }
+                _ => {
+                    let v: Option<String> = row.get(i);
+                    match v {
+                        Some(s) => Value::String(s),
+                        None => Value::Null,
+                    }
+                }
+            };
+
+            map.insert(name.to_string(), value);
+        }
+
+        results.push(Value::Object(map));
+    }
+
+    results
+}
+
+pub fn extract_columns_info(rows: &[Row]) -> Vec<Value> {
+    let mut columns_info = Vec::new();
+
+    if let Some(row) = rows.get(0) {
+        for column in row.columns() {
+            let mut map = Map::new();
+            map.insert("name".to_string(), Value::String(column.name().to_string()));
+            map.insert(
+                "type".to_string(),
+                Value::String(column.type_().name().to_string()),
+            );
+            columns_info.push(Value::Object(map));
+        }
+    }
+
+    columns_info
+}
+
+// fn extract_columns_info(rows: &[Row]) -> Option<Vec<Value>> {
+//     rows.get(0).map(|row| {
+//         row.columns()
+//             .iter()
+//             .map(|column| {
+//                 let mut map = Map::new();
+//                 map.insert("name".to_string(), Value::String(column.name().to_string()));
+//                 map.insert(
+//                     "type".to_string(),
+//                     Value::String(column.type_().name().to_string()),
+//                 );
+//                 Value::Object(map)
+//             })
+//             .collect()
+//     })
+// }
