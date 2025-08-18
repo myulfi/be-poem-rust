@@ -15,6 +15,14 @@ pub fn routes() -> Route {
         )
         .at("/:id/database-connect.json", get(database::connect))
         .at(
+            "/:id/database-query-object-list.json",
+            get(database::query_object_list),
+        )
+        .at(
+            "/:id/database-query-whitelist-list.json",
+            get(database::query_whitelist_list),
+        )
+        .at(
             "/:id/database-query-manual-run.json",
             post(database::query_manual_run),
         )
@@ -25,6 +33,22 @@ pub fn routes() -> Route {
         .at(
             "/:id/database-query-manual-all-list.json",
             get(database::query_manual_all_list),
+        )
+        .at(
+            "/:id/:name/database-query-exact-object-run.json",
+            post(database::query_exact_object_run),
+        )
+        .at(
+            "/:id/:name/database-query-exact-object-list.json",
+            get(database::query_exact_object_list),
+        )
+        .at(
+            "/:id/database-query-exact-whitelist-run.json",
+            post(database::query_exact_whitelist_run),
+        )
+        .at(
+            "/:id/database-query-exact-whitelist-list.json",
+            get(database::query_exact_whitelist_list),
         )
         .at("/server.json", get(server::list).post(server::add))
         .at(
