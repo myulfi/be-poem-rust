@@ -1,16 +1,17 @@
-use crate::models::common::{DataResponse, HeaderResponse, PaginatedResponse};
+use crate::models::common::{DataResponse, PaginatedResponse};
 use crate::models::external::database::{
     EntryExternalDatabase, EntryQueryManual, ExternalDatabase, ExternalDatabaseQuery, QueryManual,
 };
 use crate::schema::tbl_ext_database::dsl::*;
 use crate::schema::{tbl_ext_database_query, tbl_query_manual};
 use crate::utils::common::{
-    self, convert_to_count_query, extract_columns_info, rows_to_json, validate_id,
-    validation_error_response,
+    self, convert_to_count_query, extract_columns_info, extract_query_parts, is_only_comment,
+    is_sql_type, rows_to_json, split_manual_query, validate_id, validation_error_response,
 };
 use crate::{db::DbPool, models::common::Pagination};
 use chrono::Utc;
 use diesel::prelude::*;
+// use fancy_regex::Regex;
 use poem::IntoResponse;
 use poem::web::Query;
 use poem::{
@@ -522,54 +523,203 @@ pub async fn query_manual_run(
         }
     });
 
-    let query = format!("{0} LIMIT 1", entry_manual_ext_database.query);
-    let rows = client.query(&query, &[]).await;
+    let mut success_response: Option<Value> = None;
+    let mut results: Vec<Value> = Vec::new();
 
-    let columns_info = match rows {
-        Ok(rows) => {
-            println!("{:?}", rows.len());
-            extract_columns_info(&rows)
+    let mut last_name: Option<String> = None;
+    let mut last_action: Option<String> = None;
+    let mut last_row = 0;
+    let mut last_query: Option<String> = None;
+
+    let parts = split_manual_query(&entry_manual_ext_database.query);
+    for part in parts {
+        let mut row = 0;
+        let mut error: Option<String> = None;
+        match extract_query_parts(&part) {
+            Some((name, action)) => {
+                // println!("Action: {}, Name: {}", action, name);
+                if is_sql_type(&part, "(SELECT|WITH)") {
+                    if results.len() == 0 {
+                        let query = format!("{0} LIMIT 1", &part);
+                        match client.query(&query, &[]).await {
+                            Ok(rows) => {
+                                let columns_info = extract_columns_info(&rows);
+                                match diesel::insert_into(tbl_query_manual::table)
+                                    .values(QueryManual {
+                                        id: common::generate_id(),
+                                        ext_database_id,
+                                        query: part.to_string(),
+                                        created_by: jwt_auth.claims.username.clone(),
+                                        dt_created: chrono::Utc::now().naive_utc(),
+                                        updated_by: None,
+                                        dt_updated: None,
+                                        version: 0,
+                                    })
+                                    .get_result::<QueryManual>(conn)
+                                {
+                                    Ok(inserted) => {
+                                        success_response = Some(json!({
+                                            "id": inserted.id,
+                                            "header": columns_info
+                                        }));
+                                    }
+                                    Err(e) => {
+                                        eprintln!("Inserting error: {}", e);
+                                        common::error_message(
+                                            StatusCode::INTERNAL_SERVER_ERROR,
+                                            "information.internalServerError",
+                                        );
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                results.push(json!({
+                                    "error": format!("{}", e)
+                                }));
+                            }
+                        }
+                    }
+                } else if is_sql_type(&part, "(DROP|CREATE|ALTER)") {
+                    println!("{}", "DROP|CREATE|ALTER");
+                } else if is_sql_type(&part, "(INSERT|(UPDATE|DELETE)\\s.+\\s?WHERE)") {
+                    match client.execute(&part, &[]).await {
+                        Ok(affected) => {
+                            row = affected;
+                        }
+                        Err(e) => {
+                            error = Some(format!("{}", e));
+                        }
+                    }
+                    // println!("{}", "INSERT|(UPDATE|DELETE)\\s.+\\s?WHERE");
+                } else if is_only_comment(&part) {
+                    continue;
+                } else {
+                    results.push(json!({ "error": &part }));
+                    println!("ABNORMAL : {}", &part);
+                }
+
+                if let Some(err_msg) = error {
+                    if let (Some(last_name), Some(last_action), Some(last_query)) =
+                        (&last_name, &last_action, &last_query)
+                    {
+                        results.push(json!({
+                            "name": last_name,
+                            "action": last_action,
+                            "row": last_row,
+                            "query": last_query
+                        }));
+                    }
+
+                    results.push(json!({
+                        "name": name,
+                        "action": action,
+                        "message": err_msg,
+                        "query": &part
+                    }));
+
+                    last_name = None;
+                    last_action = None;
+                    last_row = 0;
+                    last_query = None;
+                } else {
+                    if last_name.as_deref() != Some(&name)
+                        || last_action.as_deref() != Some(&action)
+                    {
+                        if let (Some(last_name_val), Some(last_action_val), Some(last_query_val)) =
+                            (&last_name, &last_action, &last_query)
+                        {
+                            results.push(json!({
+                                "name": last_name_val,
+                                "action": last_action_val,
+                                "row": last_row,
+                                "query": last_query_val
+                            }));
+                        }
+
+                        last_name = Some(name.clone());
+                        last_action = Some(action.clone());
+                        last_row = row;
+                        last_query = Some(part.clone());
+                    } else {
+                        last_row += row;
+                        last_query = Some(part.clone());
+                    }
+                }
+            }
+            None => {
+                println!("No match found for part: {}", part);
+                results.push(json!({ "error": &part }));
+            }
         }
-        Err(e) => {
-            let error_response = json!({
-                "data": [
-                    { "error": format!("{}", e) }
-                ]
-            });
-            return Ok(Json(error_response));
+    }
+
+    if !results.is_empty() {
+        if let (Some(last_name_val), Some(last_action_val), Some(last_query_val)) =
+            (&last_name, &last_action, &last_query)
+        {
+            results.push(json!({
+                "name": last_name_val,
+                "action": last_action_val,
+                "row": last_row,
+                "query": last_query_val
+            }));
         }
-    };
 
-    let inserted = diesel::insert_into(tbl_query_manual::table)
-        .values(QueryManual {
-            id: common::generate_id(),
-            ext_database_id: ext_database_id,
-            query: entry_manual_ext_database.query,
-            created_by: jwt_auth.claims.username,
-            dt_created: Utc::now().naive_utc(),
-            updated_by: None,
-            dt_updated: None,
-            version: 0,
-        })
-        .get_result::<QueryManual>(conn)
-        .map_err(|e| {
-            eprintln!("Inserting error: {}", e);
-            common::error_message(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "information.internalServerError",
-            )
-        })?;
+        Ok(Json(json!({ "data": results })))
+    } else if let Some(success) = success_response {
+        Ok(Json(success))
+    } else {
+        Ok(Json(json!({ "message": "No valid query executed" })))
+    }
 
-    // Ok(Json(HeaderResponse {
-    //     id: inserted.id,
-    //     header: Value::Array(columns_info),
-    // }))
-    let success_response = json!({
-        "id": inserted.id,
-        "header": columns_info
-    });
+    // let query = format!("{0} LIMIT 1", entry_manual_ext_database.query);
+    // let rows = client.query(&query, &[]).await;
 
-    Ok(Json(success_response))
+    // let columns_info = match rows {
+    //     Ok(rows) => {
+    //         println!("{:?}", rows.len());
+    //         extract_columns_info(&rows)
+    //     }
+    //     Err(e) => {
+    //         let error_response = json!({
+    //             "data": [
+    //                 { "error": format!("{}", e) }
+    //             ]
+    //         });
+    //         return Ok(Json(error_response));
+    //     }
+    // };
+
+    // let inserted = diesel::insert_into(tbl_query_manual::table)
+    //     .values(QueryManual {
+    //         id: common::generate_id(),
+    //         ext_database_id: ext_database_id,
+    //         query: entry_manual_ext_database.query,
+    //         created_by: jwt_auth.claims.username,
+    //         dt_created: Utc::now().naive_utc(),
+    //         updated_by: None,
+    //         dt_updated: None,
+    //         version: 0,
+    //     })
+    //     .get_result::<QueryManual>(conn)
+    //     .map_err(|e| {
+    //         eprintln!("Inserting error: {}", e);
+    //         common::error_message(
+    //             StatusCode::INTERNAL_SERVER_ERROR,
+    //             "information.internalServerError",
+    //         )
+    //     })?;
+
+    // // Ok(Json(HeaderResponse {
+    // //     id: inserted.id,
+    // //     header: Value::Array(columns_info),
+    // // }))
+    // let success_response = json!({
+    //     "id": inserted.id,
+    //     "header": columns_info
+    // });
+
+    // Ok(Json(success_response))
     // Ok(Json(DataResponse { data: ext_database }))
 }
 

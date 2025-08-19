@@ -23,3 +23,5 @@ validator = "0.18"
 validator_derive = "0.18"
 tokio-postgres = "0.7.13"
 rust_decimal = { version = "1.36", features = ["db-tokio-postgres"] }
+log = "0.4"
+regex = "1"

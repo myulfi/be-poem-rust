@@ -1,4 +1,5 @@
 use rand::Rng;
+use regex::Regex;
 use serde_json::{Map, Value, json};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio_postgres::Row;
@@ -257,3 +258,216 @@ pub fn extract_columns_info(rows: &[Row]) -> Vec<Value> {
 //             .collect()
 //     })
 // }
+
+pub fn split_manual_query(input: &str) -> Vec<String> {
+    let mut results = Vec::new();
+    let mut current = String::new();
+
+    enum State {
+        Normal,
+        SingleQuote,
+        DoubleQuote,
+        LineComment,
+        BlockComment,
+        BeginEndBlock,
+    }
+
+    use State::*;
+
+    let mut state = Normal;
+    let mut begin_end_level = 0;
+    let mut chars = input.chars().peekable();
+
+    while let Some(c) = chars.next() {
+        match state {
+            Normal => match c {
+                '\'' => {
+                    state = SingleQuote;
+                    current.push(c);
+                }
+                '"' => {
+                    state = DoubleQuote;
+                    current.push(c);
+                }
+                '-' => {
+                    if chars.peek() == Some(&'-') {
+                        current.push('-');
+                        current.push('-');
+                        chars.next();
+                        state = LineComment;
+                    } else {
+                        current.push(c);
+                    }
+                }
+                '/' => {
+                    if chars.peek() == Some(&'*') {
+                        current.push('/');
+                        current.push('*');
+                        chars.next();
+                        state = BlockComment;
+                    } else {
+                        current.push(c);
+                    }
+                }
+                'B' | 'b' => {
+                    let mut peek_str = String::from(c);
+                    for _ in 0..4 {
+                        if let Some(&ch) = chars.peek() {
+                            peek_str.push(ch);
+                            chars.next();
+                        } else {
+                            break;
+                        }
+                    }
+
+                    if peek_str.to_uppercase() == "BEGIN" {
+                        begin_end_level += 1;
+                        state = BeginEndBlock;
+                    }
+
+                    current.push_str(&peek_str);
+                }
+                ';' => {
+                    if begin_end_level == 0 {
+                        let trimmed = current.trim();
+                        if !trimmed.is_empty() {
+                            results.push(trimmed.to_string());
+                        }
+                        current.clear();
+                    } else {
+                        current.push(c);
+                    }
+                }
+                _ => {
+                    current.push(c);
+                }
+            },
+            SingleQuote => {
+                current.push(c);
+                if c == '\'' {
+                    state = Normal;
+                } else if c == '\\' {
+                    if let Some(next_c) = chars.next() {
+                        current.push(next_c);
+                    }
+                }
+            }
+            DoubleQuote => {
+                current.push(c);
+                if c == '"' {
+                    state = Normal;
+                } else if c == '\\' {
+                    if let Some(next_c) = chars.next() {
+                        current.push(next_c);
+                    }
+                }
+            }
+            LineComment => {
+                current.push(c);
+                if c == '\n' {
+                    state = Normal;
+                }
+            }
+            BlockComment => {
+                current.push(c);
+                if c == '*' {
+                    if let Some(&'/') = chars.peek() {
+                        chars.next();
+                        current.push('/');
+                        state = Normal;
+                    }
+                }
+            }
+            BeginEndBlock => {
+                current.push(c);
+
+                if c == 'B' || c == 'b' {
+                    let mut peek_str = String::from(c);
+                    for _ in 0..4 {
+                        if let Some(&ch) = chars.peek() {
+                            peek_str.push(ch);
+                            chars.next();
+                        } else {
+                            break;
+                        }
+                    }
+                    if peek_str.to_uppercase() == "BEGIN" {
+                        begin_end_level += 1;
+                    }
+                    current.push_str(&peek_str[1..]);
+                }
+
+                if c == 'E' || c == 'e' {
+                    let mut peek_str = String::from(c);
+                    for _ in 0..2 {
+                        if let Some(&ch) = chars.peek() {
+                            peek_str.push(ch);
+                            chars.next();
+                        } else {
+                            break;
+                        }
+                    }
+                    if peek_str.to_uppercase() == "END" && begin_end_level > 0 {
+                        begin_end_level -= 1;
+                        if begin_end_level == 0 {
+                            state = Normal;
+                        }
+                    }
+                    current.push_str(&peek_str[1..]);
+                }
+            }
+        }
+    }
+
+    // Tambahkan statement terakhir jika ada
+    let trimmed = current.trim();
+    if !trimmed.is_empty() {
+        results.push(trimmed.to_string());
+    }
+
+    results
+}
+
+// pub fn is_sql_type(query: &str, keyword: &str) -> bool {
+//     let pattern = format!(
+//         r"(?si)^\s*((--.*(\r\n|\r|\n))|(\/\*[\s\S]*?\*\/))*\s*{}\b",
+//         keyword
+//     );
+//     Regex::new(&pattern).unwrap().is_match(query)
+// }
+
+pub fn is_sql_type(query: &str, keyword: &str) -> bool {
+    // Contoh: keyword = "DROP|CREATE|ALTER"
+    let pattern = format!(
+        r"(?si)^\s*((--[^\n]*\n?)|(/\*[\s\S]*?\*/))*\s*{}(\s|\(|$)",
+        keyword
+    );
+    Regex::new(&pattern).unwrap().is_match(query)
+}
+
+pub fn is_only_comment(query: &str) -> bool {
+    let re = Regex::new(r"(?s)^\s*((--[^\n]*\n?)|(/\*[\s\S]*?\*/))*\s*$").unwrap();
+    re.is_match(query)
+}
+
+pub fn extract_query_parts(flat_query: &str) -> Option<(String, String)> {
+    // let query_pattern = r"(?is)(SELECT)\s+.*?\s+FROM\s+(\S+)
+    //                     |(INSERT)\s+INTO\s+(\S+)
+    //                     |(UPDATE)\s+(\S+)\s+SET
+    //                     |(DELETE)\s+FROM\s+(\S+)
+    //                     |((?:CREATE OR REPLACE|CREATE|REPLACE|ALTER|DROP)\s+(?:FUNCTION|TABLE|VIEW|PROCEDURE))\s+(\S+)";
+    let query_pattern = r"(?is)(SELECT)\s+.*?\s+FROM\s+(\S+)|(INSERT)\s+INTO\s+(\S+)|(UPDATE)\s+(\S+)\s+SET|(DELETE)\s+FROM\s+(\S+)|((?:CREATE OR REPLACE|CREATE|REPLACE|ALTER|DROP)\s+(?:FUNCTION|TABLE|VIEW|PROCEDURE))\s+(\S+)";
+
+    let re = Regex::new(query_pattern).unwrap();
+
+    if let Some(caps) = re.captures(flat_query) {
+        for i in (2..=10).rev().step_by(2) {
+            if let (Some(name_match), Some(action_match)) = (caps.get(i), caps.get(i - 1)) {
+                let name = name_match.as_str().to_lowercase();
+                let action = action_match.as_str().to_lowercase();
+                return Some((name, action));
+            }
+        }
+    }
+    None
+}
