@@ -6,7 +6,8 @@ use crate::schema::tbl_ext_database::dsl::*;
 use crate::schema::{tbl_ext_database_query, tbl_query_manual};
 use crate::utils::common::{
     self, convert_to_count_query, extract_columns_info, extract_query_parts, is_only_comment,
-    is_sql_type, rows_to_json, split_manual_query, validate_id, validation_error_response,
+    is_sql_type, rows_to_insert_query_string, rows_to_json, split_manual_query, validate_id,
+    validation_error_response,
 };
 use crate::{db::DbPool, models::common::Pagination};
 use chrono::Utc;
@@ -672,56 +673,6 @@ pub async fn query_manual_run(
     } else {
         Ok(Json(json!({ "message": "No valid query executed" })))
     }
-
-    // let query = format!("{0} LIMIT 1", entry_manual_ext_database.query);
-    // let rows = client.query(&query, &[]).await;
-
-    // let columns_info = match rows {
-    //     Ok(rows) => {
-    //         println!("{:?}", rows.len());
-    //         extract_columns_info(&rows)
-    //     }
-    //     Err(e) => {
-    //         let error_response = json!({
-    //             "data": [
-    //                 { "error": format!("{}", e) }
-    //             ]
-    //         });
-    //         return Ok(Json(error_response));
-    //     }
-    // };
-
-    // let inserted = diesel::insert_into(tbl_query_manual::table)
-    //     .values(QueryManual {
-    //         id: common::generate_id(),
-    //         ext_database_id: ext_database_id,
-    //         query: entry_manual_ext_database.query,
-    //         created_by: jwt_auth.claims.username,
-    //         dt_created: Utc::now().naive_utc(),
-    //         updated_by: None,
-    //         dt_updated: None,
-    //         version: 0,
-    //     })
-    //     .get_result::<QueryManual>(conn)
-    //     .map_err(|e| {
-    //         eprintln!("Inserting error: {}", e);
-    //         common::error_message(
-    //             StatusCode::INTERNAL_SERVER_ERROR,
-    //             "information.internalServerError",
-    //         )
-    //     })?;
-
-    // // Ok(Json(HeaderResponse {
-    // //     id: inserted.id,
-    // //     header: Value::Array(columns_info),
-    // // }))
-    // let success_response = json!({
-    //     "id": inserted.id,
-    //     "header": columns_info
-    // });
-
-    // Ok(Json(success_response))
-    // Ok(Json(DataResponse { data: ext_database }))
 }
 
 #[handler]
@@ -872,6 +823,82 @@ pub async fn query_manual_all_list(
 
     let results = rows_to_json(&rows);
     Ok(Json(DataResponse { data: results }))
+}
+
+#[handler]
+pub async fn query_manual_sql_insert(
+    pool: poem::web::Data<&DbPool>,
+    _: crate::auth::middleware::JwtAuth,
+    Path((query_manual_id, include_column_name_flag, number_line_per_action)): Path<(
+        i64,
+        i16,
+        i16,
+    )>,
+) -> poem::Result<impl IntoResponse> {
+    validate_id(query_manual_id)?;
+
+    let conn = &mut pool.get().map_err(|_| {
+        common::error_message(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "information.connectionFailed",
+        )
+    })?;
+
+    let query_manual_detail: (i16, String) = tbl_query_manual::table
+        .filter(tbl_query_manual::id.eq(query_manual_id))
+        .select((tbl_query_manual::ext_database_id, tbl_query_manual::query))
+        .first(conn)
+        .map_err(|_| common::error_message(StatusCode::NOT_FOUND, "Not Found"))?;
+
+    let credential_ext_database: (String, String, String) = tbl_ext_database
+        .filter(id.eq(query_manual_detail.0))
+        .filter(is_del.eq(0))
+        .select((username, password, db_connection))
+        .first(conn)
+        .map_err(|_| common::error_message(StatusCode::NOT_FOUND, "information.notFound"))?;
+
+    let ext_database_connection = format!(
+        "postgres://{}:{}@{}",
+        credential_ext_database.0, credential_ext_database.1, credential_ext_database.2
+    );
+
+    let (client, connection) = tokio_postgres::connect(&ext_database_connection, NoTls)
+        .await
+        .map_err(|e| {
+            eprintln!("Database connection error: {}", e);
+            poem::Error::from_status(StatusCode::INTERNAL_SERVER_ERROR)
+        })?;
+
+    // Jalankan koneksi di background
+    tokio::spawn(async move {
+        if let Err(e) = connection.await {
+            eprintln!("Connection error: {}", e);
+        }
+    });
+
+    let rows = client
+        .query(&query_manual_detail.1, &[])
+        .await
+        .map_err(|e| {
+            eprintln!("Query error: {}", e);
+            poem::Error::from_status(StatusCode::INTERNAL_SERVER_ERROR)
+        })?;
+
+    match extract_query_parts(&query_manual_detail.1) {
+        Some((name, _)) => {
+            let results = rows_to_insert_query_string(
+                &name,
+                include_column_name_flag,
+                number_line_per_action,
+                &rows,
+            );
+            Ok(Json(DataResponse { data: results }))
+        }
+        None => Err(common::error_message(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "information.notFound",
+        )),
+    }
 }
 
 #[handler]

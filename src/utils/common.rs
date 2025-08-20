@@ -1,6 +1,8 @@
 use rand::Rng;
 use regex::Regex;
+use rust_decimal::Decimal;
 use serde_json::{Map, Value, json};
+use std::fmt::Write;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio_postgres::Row;
 use validator::ValidationErrors;
@@ -222,6 +224,113 @@ pub fn rows_to_json(rows: &[Row]) -> Vec<Value> {
     }
 
     results
+}
+
+pub fn rows_to_insert_query_string(
+    table_name: &str,
+    include_column_name_flag: i16,
+    number_line_per_action: i16,
+    rows: &[Row],
+) -> String {
+    let mut result = String::new();
+    let mut batch = Vec::new();
+
+    for (row_index, row) in rows.iter().enumerate() {
+        let mut columns = Vec::new();
+        let mut values = Vec::new();
+
+        for (i, column) in row.columns().iter().enumerate() {
+            let name = column.name().to_string();
+
+            let value = match column.type_().name() {
+                "oid" => {
+                    let v: Option<Oid> = row.try_get(i).ok();
+                    v.map(|oid| oid.to_string())
+                        .unwrap_or_else(|| "NULL".to_string())
+                }
+                "int2" => {
+                    let v: i16 = row.get(i);
+                    v.to_string()
+                }
+                "int4" => {
+                    let v: i32 = row.get(i);
+                    v.to_string()
+                }
+                "int8" => {
+                    let v: Option<i64> = row.get(i);
+                    v.map(|val| val.to_string())
+                        .unwrap_or_else(|| "NULL".to_string())
+                }
+                "float4" | "float8" => {
+                    let v: f64 = row.get(i);
+                    if v.is_finite() {
+                        v.to_string()
+                    } else {
+                        "NULL".to_string()
+                    }
+                }
+                "numeric" => {
+                    let v: Option<Decimal> = row.get(i);
+                    v.map(|val| format!("'{}'", val.to_string()))
+                        .unwrap_or_else(|| "NULL".to_string())
+                }
+                "bool" => {
+                    let v: bool = row.get(i);
+                    v.to_string()
+                }
+                "date" | "timestamp" => {
+                    let val: Option<String> = row.try_get(i).ok();
+                    val.map(|s| format!("'{}'", s))
+                        .unwrap_or_else(|| "NULL".to_string())
+                }
+                _ => {
+                    let v: Option<String> = row.get(i);
+                    v.map(|s| format!("'{}'", s.replace('\'', "''")))
+                        .unwrap_or_else(|| "NULL".to_string())
+                }
+            };
+
+            columns.push(name);
+            values.push(value);
+        }
+
+        // Tambahkan values ke dalam batch
+        batch.push(values.join(", "));
+
+        let is_last = row_index == rows.len() - 1;
+        let batch_size = number_line_per_action.max(1) as usize;
+
+        if batch.len() == batch_size || is_last {
+            if include_column_name_flag == 1 {
+                let _ = write!(
+                    &mut result,
+                    "INSERT INTO {} ({}) VALUES ({});\n",
+                    table_name,
+                    columns.join(", "),
+                    batch
+                        .iter()
+                        .map(|v| format!("({})", v))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                );
+            } else {
+                let _ = write!(
+                    &mut result,
+                    "INSERT INTO {} VALUES ({});\n",
+                    table_name,
+                    batch
+                        .iter()
+                        .map(|v| format!("({})", v))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                );
+            }
+
+            batch.clear();
+        }
+    }
+
+    result
 }
 
 pub fn extract_columns_info(rows: &[Row]) -> Vec<Value> {
