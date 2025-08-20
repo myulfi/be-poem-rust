@@ -333,6 +333,127 @@ pub fn rows_to_insert_query_string(
     result
 }
 
+pub fn rows_to_update_query_string(
+    table_name: &str,
+    multiple_line_flag: i16,
+    first_amount_conditioned: i16,
+    rows: &[Row],
+) -> String {
+    let mut result = String::new();
+
+    for row in rows {
+        let mut set_clauses = Vec::new();
+        let mut where_clauses = Vec::new();
+        let mut column_names = Vec::new();
+
+        for (i, column) in row.columns().iter().enumerate() {
+            column_names.push(column.name().to_string());
+        }
+
+        for (i, name) in column_names.iter().enumerate() {
+            let value = match row.columns()[i].type_().name() {
+                "oid" => {
+                    let v: Option<Oid> = row.try_get(i).ok();
+                    v.map(|oid| oid.to_string())
+                        .unwrap_or_else(|| "NULL".to_string())
+                }
+                "int2" => {
+                    let v: i16 = row.get(i);
+                    v.to_string()
+                }
+                "int4" => {
+                    let v: i32 = row.get(i);
+                    v.to_string()
+                }
+                "int8" => {
+                    let v: Option<i64> = row.get(i);
+                    v.map(|val| val.to_string())
+                        .unwrap_or_else(|| "NULL".to_string())
+                }
+                "float4" | "float8" => {
+                    let v: f64 = row.get(i);
+                    if v.is_finite() {
+                        v.to_string()
+                    } else {
+                        "NULL".to_string()
+                    }
+                }
+                "numeric" => {
+                    let v: Option<Decimal> = row.get(i);
+                    v.map(|val| format!("'{}'", val.to_string()))
+                        .unwrap_or_else(|| "NULL".to_string())
+                }
+                "bool" => {
+                    let v: bool = row.get(i);
+                    v.to_string()
+                }
+                "date" | "timestamp" => {
+                    let val: Option<String> = row.try_get(i).ok();
+                    val.map(|s| format!("'{}'", s))
+                        .unwrap_or_else(|| "NULL".to_string())
+                }
+                _ => {
+                    let v: Option<String> = row.get(i);
+                    v.map(|s| format!("'{}'", s.replace('\'', "''")))
+                        .unwrap_or_else(|| "NULL".to_string())
+                }
+            };
+
+            if (i as i16) < first_amount_conditioned {
+                where_clauses.push(format!("{} = {}", name, value));
+            } else {
+                set_clauses.push(format!("{} = {}", name, value));
+            }
+        }
+
+        let mut update_sql = String::new();
+
+        if multiple_line_flag == 1 {
+            let _ = writeln!(&mut update_sql, "UPDATE {}", table_name);
+            if !set_clauses.is_empty() {
+                let _ = writeln!(
+                    &mut update_sql,
+                    "SET {}",
+                    set_clauses
+                        .iter()
+                        .enumerate()
+                        .map(|(i, v)| {
+                            if i == 0 {
+                                format!("{}", v)
+                            } else {
+                                format!(", {}", v)
+                            }
+                        })
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                );
+            }
+            if !where_clauses.is_empty() {
+                let _ = writeln!(&mut update_sql, "WHERE {};", where_clauses.join(" AND "));
+            } else {
+                update_sql.push_str(";\n");
+            }
+
+            update_sql.push('\n'); // <- Tambahkan newline antar statement
+        } else {
+            let _ = write!(
+                &mut update_sql,
+                "UPDATE {} SET {}",
+                table_name,
+                set_clauses.join(", ")
+            );
+            if !where_clauses.is_empty() {
+                let _ = write!(&mut update_sql, " WHERE {};", where_clauses.join(" AND "));
+            }
+            update_sql.push('\n');
+        }
+
+        result.push_str(&update_sql);
+    }
+
+    result
+}
+
 pub fn extract_columns_info(rows: &[Row]) -> Vec<Value> {
     let mut columns_info = Vec::new();
 

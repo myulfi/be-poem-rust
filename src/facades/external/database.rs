@@ -6,8 +6,8 @@ use crate::schema::tbl_ext_database::dsl::*;
 use crate::schema::{tbl_ext_database_query, tbl_query_manual};
 use crate::utils::common::{
     self, convert_to_count_query, extract_columns_info, extract_query_parts, is_only_comment,
-    is_sql_type, rows_to_insert_query_string, rows_to_json, split_manual_query, validate_id,
-    validation_error_response,
+    is_sql_type, rows_to_insert_query_string, rows_to_json, rows_to_update_query_string,
+    split_manual_query, validate_id, validation_error_response,
 };
 use crate::{db::DbPool, models::common::Pagination};
 use chrono::Utc;
@@ -890,6 +890,78 @@ pub async fn query_manual_sql_insert(
                 &name,
                 include_column_name_flag,
                 number_line_per_action,
+                &rows,
+            );
+            Ok(Json(DataResponse { data: results }))
+        }
+        None => Err(common::error_message(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "information.notFound",
+        )),
+    }
+}
+
+#[handler]
+pub async fn query_manual_sql_update(
+    pool: poem::web::Data<&DbPool>,
+    _: crate::auth::middleware::JwtAuth,
+    Path((query_manual_id, multiple_line_flag, first_amount_conditioned)): Path<(i64, i16, i16)>,
+) -> poem::Result<impl IntoResponse> {
+    validate_id(query_manual_id)?;
+
+    let conn = &mut pool.get().map_err(|_| {
+        common::error_message(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "information.connectionFailed",
+        )
+    })?;
+
+    let query_manual_detail: (i16, String) = tbl_query_manual::table
+        .filter(tbl_query_manual::id.eq(query_manual_id))
+        .select((tbl_query_manual::ext_database_id, tbl_query_manual::query))
+        .first(conn)
+        .map_err(|_| common::error_message(StatusCode::NOT_FOUND, "Not Found"))?;
+
+    let credential_ext_database: (String, String, String) = tbl_ext_database
+        .filter(id.eq(query_manual_detail.0))
+        .filter(is_del.eq(0))
+        .select((username, password, db_connection))
+        .first(conn)
+        .map_err(|_| common::error_message(StatusCode::NOT_FOUND, "information.notFound"))?;
+
+    let ext_database_connection = format!(
+        "postgres://{}:{}@{}",
+        credential_ext_database.0, credential_ext_database.1, credential_ext_database.2
+    );
+
+    let (client, connection) = tokio_postgres::connect(&ext_database_connection, NoTls)
+        .await
+        .map_err(|e| {
+            eprintln!("Database connection error: {}", e);
+            poem::Error::from_status(StatusCode::INTERNAL_SERVER_ERROR)
+        })?;
+
+    // Jalankan koneksi di background
+    tokio::spawn(async move {
+        if let Err(e) = connection.await {
+            eprintln!("Connection error: {}", e);
+        }
+    });
+
+    let rows = client
+        .query(&query_manual_detail.1, &[])
+        .await
+        .map_err(|e| {
+            eprintln!("Query error: {}", e);
+            poem::Error::from_status(StatusCode::INTERNAL_SERVER_ERROR)
+        })?;
+
+    match extract_query_parts(&query_manual_detail.1) {
+        Some((name, _)) => {
+            let results = rows_to_update_query_string(
+                &name,
+                multiple_line_flag,
+                first_amount_conditioned,
                 &rows,
             );
             Ok(Json(DataResponse { data: results }))

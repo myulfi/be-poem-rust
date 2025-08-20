@@ -35,8 +35,12 @@ pub fn routes() -> Route {
             get(database::query_manual_all_list),
         )
         .at(
-            "/:id/:includeColumnNameFlag/:numberLinePerAction/database-query-manual-sql-insert.json",
+            "/:id/:include_column_name_flag/:number_line_per_action/database-query-manual-sql-insert.json",
             get(database::query_manual_sql_insert),
+        )
+        .at(
+            "/:id/:multiple_line_flag/:first_amount_conditioned/database-query-manual-sql-update.json",
+            get(database::query_manual_sql_update),
         )
         .at(
             "/:id/:name/database-query-exact-object-run.json",
