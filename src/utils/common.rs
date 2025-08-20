@@ -456,7 +456,7 @@ pub fn extract_query_parts(flat_query: &str) -> Option<(String, String)> {
     //                     |(UPDATE)\s+(\S+)\s+SET
     //                     |(DELETE)\s+FROM\s+(\S+)
     //                     |((?:CREATE OR REPLACE|CREATE|REPLACE|ALTER|DROP)\s+(?:FUNCTION|TABLE|VIEW|PROCEDURE))\s+(\S+)";
-    let query_pattern = r"(?is)(SELECT)\s+.*?\s+FROM\s+(\S+)|(INSERT)\s+INTO\s+(\S+)|(UPDATE)\s+(\S+)\s+SET|(DELETE)\s+FROM\s+(\S+)|((?:CREATE OR REPLACE|CREATE|REPLACE|ALTER|DROP)\s+(?:FUNCTION|TABLE|VIEW|PROCEDURE))\s+(\S+)";
+    let query_pattern = r"(?is)(SELECT)\s+.*?\s+FROM\s+(\S+)|(INSERT)\s+INTO\s+(\S+)|(UPDATE)\s+(\S+)\s+SET|(DELETE)\s+FROM\s+(\S+)|(CREATE|REPLACE|ALTER|DROP)\s+(\S+)";
 
     let re = Regex::new(query_pattern).unwrap();
 

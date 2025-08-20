@@ -528,74 +528,77 @@ pub async fn query_manual_run(
 
     let mut last_name: Option<String> = None;
     let mut last_action: Option<String> = None;
-    let mut last_row = 0;
     let mut last_query: Option<String> = None;
+    let mut last_affected = 0;
 
     let parts = split_manual_query(&entry_manual_ext_database.query);
     for part in parts {
-        let mut row = 0;
+        let mut affected = 0;
         let mut error: Option<String> = None;
         match extract_query_parts(&part) {
             Some((name, action)) => {
                 // println!("Action: {}, Name: {}", action, name);
-                if is_sql_type(&part, "(SELECT|WITH)") {
-                    if results.len() == 0 {
-                        let query = format!("{0} LIMIT 1", &part);
-                        match client.query(&query, &[]).await {
-                            Ok(rows) => {
-                                let columns_info = extract_columns_info(&rows);
-                                match diesel::insert_into(tbl_query_manual::table)
-                                    .values(QueryManual {
-                                        id: common::generate_id(),
-                                        ext_database_id,
-                                        query: part.to_string(),
-                                        created_by: jwt_auth.claims.username.clone(),
-                                        dt_created: chrono::Utc::now().naive_utc(),
-                                        updated_by: None,
-                                        dt_updated: None,
-                                        version: 0,
-                                    })
-                                    .get_result::<QueryManual>(conn)
-                                {
-                                    Ok(inserted) => {
-                                        success_response = Some(json!({
-                                            "id": inserted.id,
-                                            "header": columns_info
-                                        }));
-                                    }
-                                    Err(e) => {
-                                        eprintln!("Inserting error: {}", e);
-                                        common::error_message(
-                                            StatusCode::INTERNAL_SERVER_ERROR,
-                                            "information.internalServerError",
-                                        );
-                                    }
+                if is_sql_type(&part, "(SELECT|WITH)") && results.len() == 0 {
+                    let query = format!("{0} LIMIT 1", &part);
+                    match client.query(&query, &[]).await {
+                        Ok(rows) => {
+                            let columns_info = extract_columns_info(&rows);
+                            match diesel::insert_into(tbl_query_manual::table)
+                                .values(QueryManual {
+                                    id: common::generate_id(),
+                                    ext_database_id,
+                                    query: part.to_string(),
+                                    created_by: jwt_auth.claims.username.clone(),
+                                    dt_created: chrono::Utc::now().naive_utc(),
+                                    updated_by: None,
+                                    dt_updated: None,
+                                    version: 0,
+                                })
+                                .get_result::<QueryManual>(conn)
+                            {
+                                Ok(inserted) => {
+                                    success_response = Some(json!({
+                                        "id": inserted.id,
+                                        "header": columns_info
+                                    }));
+                                }
+                                Err(e) => {
+                                    eprintln!("Inserting error: {}", e);
+                                    common::error_message(
+                                        StatusCode::INTERNAL_SERVER_ERROR,
+                                        "information.internalServerError",
+                                    );
                                 }
                             }
-                            Err(e) => {
-                                results.push(json!({
-                                    "error": format!("{}", e)
-                                }));
-                            }
+                        }
+                        Err(e) => {
+                            results.push(json!({
+                                "error": format!("{}", e)
+                            }));
                         }
                     }
                 } else if is_sql_type(&part, "(DROP|CREATE|ALTER)") {
-                    println!("{}", "DROP|CREATE|ALTER");
-                } else if is_sql_type(&part, "(INSERT|(UPDATE|DELETE)\\s.+\\s?WHERE)") {
                     match client.execute(&part, &[]).await {
-                        Ok(affected) => {
-                            row = affected;
+                        Ok(_) => {
+                            affected = 1;
                         }
                         Err(e) => {
                             error = Some(format!("{}", e));
                         }
                     }
-                    // println!("{}", "INSERT|(UPDATE|DELETE)\\s.+\\s?WHERE");
+                } else if is_sql_type(&part, "(INSERT|(UPDATE|DELETE)\\s.+\\s?WHERE)") {
+                    match client.execute(&part, &[]).await {
+                        Ok(row) => {
+                            affected = row;
+                        }
+                        Err(e) => {
+                            error = Some(format!("{}", e));
+                        }
+                    }
                 } else if is_only_comment(&part) {
                     continue;
                 } else {
-                    results.push(json!({ "error": &part }));
-                    println!("ABNORMAL : {}", &part);
+                    error = Some(String::from("Abnormal"));
                 }
 
                 if let Some(err_msg) = error {
@@ -605,23 +608,23 @@ pub async fn query_manual_run(
                         results.push(json!({
                             "name": last_name,
                             "action": last_action,
-                            "row": last_row,
-                            "query": last_query
+                            "query": last_query,
+                            "affected": last_affected,
                         }));
                     }
 
                     results.push(json!({
                         "name": name,
                         "action": action,
+                        "query": &part,
                         "message": err_msg,
-                        "query": &part
                     }));
 
                     last_name = None;
                     last_action = None;
-                    last_row = 0;
                     last_query = None;
-                } else {
+                    last_affected = 0;
+                } else if "select" != action {
                     if last_name.as_deref() != Some(&name)
                         || last_action.as_deref() != Some(&action)
                     {
@@ -631,18 +634,17 @@ pub async fn query_manual_run(
                             results.push(json!({
                                 "name": last_name_val,
                                 "action": last_action_val,
-                                "row": last_row,
-                                "query": last_query_val
+                                "query": last_query_val,
+                                "affected": last_affected,
                             }));
                         }
 
                         last_name = Some(name.clone());
                         last_action = Some(action.clone());
-                        last_row = row;
                         last_query = Some(part.clone());
+                        last_affected = affected;
                     } else {
-                        last_row += row;
-                        last_query = Some(part.clone());
+                        last_affected += affected;
                     }
                 }
             }
@@ -653,18 +655,17 @@ pub async fn query_manual_run(
         }
     }
 
-    if !results.is_empty() {
-        if let (Some(last_name_val), Some(last_action_val), Some(last_query_val)) =
-            (&last_name, &last_action, &last_query)
-        {
-            results.push(json!({
-                "name": last_name_val,
-                "action": last_action_val,
-                "row": last_row,
-                "query": last_query_val
-            }));
-        }
-
+    if let (Some(last_name_val), Some(last_action_val), Some(last_query_val)) =
+        (&last_name, &last_action, &last_query)
+    {
+        results.push(json!({
+            "name": last_name_val,
+            "action": last_action_val,
+            "query": last_query_val,
+            "affected": last_affected,
+        }));
+        Ok(Json(json!({ "data": results })))
+    } else if !results.is_empty() {
         Ok(Json(json!({ "data": results })))
     } else if let Some(success) = success_response {
         Ok(Json(success))
