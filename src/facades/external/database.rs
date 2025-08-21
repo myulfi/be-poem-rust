@@ -13,10 +13,8 @@ use crate::utils::common::{
 use crate::{db::DbPool, models::common::Pagination};
 use chrono::Utc;
 use diesel::prelude::*;
-use futures::future::ok;
-// use fancy_regex::Regex;
+use poem::IntoResponse;
 use poem::web::Query;
-use poem::{IntoResponse, Result};
 use poem::{
     handler,
     http::StatusCode,
@@ -66,23 +64,16 @@ async fn connect_to_external_database(connection_str: &str) -> poem::Result<Clie
     Ok(client)
 }
 
-//perlu di gabungkan
-fn get_query_manual_detail(
-    conn: &mut PgConnection,
-    query_manual_id: i64,
-) -> poem::Result<(i16, String)> {
-    tbl_query_manual::table
-        .filter(tbl_query_manual::id.eq(query_manual_id))
-        .select((tbl_query_manual::ext_database_id, tbl_query_manual::query))
-        .first(conn)
-        .map_err(|_| common::error_message(StatusCode::NOT_FOUND, "Not Found"))
-}
-
 async fn get_query_manual_client(
     conn: &mut PgConnection,
     query_manual_id: i64,
 ) -> poem::Result<(Client, String)> {
-    let (ext_database_id, query_str) = get_query_manual_detail(conn, query_manual_id)?;
+    let (ext_database_id, query_str): (i16, String) = tbl_query_manual::table
+        .filter(tbl_query_manual::id.eq(query_manual_id))
+        .select((tbl_query_manual::ext_database_id, tbl_query_manual::query))
+        .first(conn)
+        .map_err(|_| common::error_message(StatusCode::NOT_FOUND, "information.notFound"))?;
+
     let client = get_external_pg_client(conn, ext_database_id).await?;
     Ok((client, query_str))
 }
