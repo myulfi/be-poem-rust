@@ -5,6 +5,7 @@ use serde_json::{Map, Value, json as json_macro};
 use std::fmt::Write;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio_postgres::Row;
+use umya_spreadsheet::{new_file, writer};
 use validator::ValidationErrors;
 
 use crate::utils::common;
@@ -452,6 +453,255 @@ pub fn rows_to_update_query_string(
     }
 
     result
+}
+
+pub fn rows_to_xlsx_bytes_2(first_amount_combined: i16, rows: &[Row]) -> poem::Result<Vec<u8>> {
+    if rows.is_empty() {
+        return Ok(vec![]);
+    }
+
+    // Buat workbook baru
+    let mut book = new_file();
+    let sheet_name = "Sheet1";
+
+    // Tambahkan sheet baru (kalau belum ada)
+    let _ = book.new_sheet(sheet_name);
+
+    let columns = rows[0].columns();
+    let mut row_idx = 1;
+
+    // Header
+    for (col_idx, col) in columns.iter().enumerate() {
+        let col_name = col.name();
+        book.get_sheet_by_name_mut(sheet_name)
+            .unwrap()
+            .get_cell_mut((col_idx as u32 + 1, row_idx))
+            .set_value(col_name);
+    }
+
+    row_idx += 1;
+
+    // Data
+    for row in rows {
+        for (col_idx, column) in row.columns().iter().enumerate() {
+            let value = match column.type_().name() {
+                "oid" => row
+                    .try_get::<_, Option<u32>>(col_idx)
+                    .ok()
+                    .flatten()
+                    .map(|v| v.to_string())
+                    .unwrap_or_default(),
+                "int2" => row
+                    .try_get::<_, Option<i16>>(col_idx)
+                    .ok()
+                    .flatten()
+                    .map(|v| v.to_string())
+                    .unwrap_or_default(),
+                "int4" => row
+                    .try_get::<_, Option<i32>>(col_idx)
+                    .ok()
+                    .flatten()
+                    .map(|v| v.to_string())
+                    .unwrap_or_default(),
+                "int8" => row
+                    .try_get::<_, Option<i64>>(col_idx)
+                    .ok()
+                    .flatten()
+                    .map(|v| v.to_string())
+                    .unwrap_or_default(),
+                "float4" | "float8" => row
+                    .try_get::<_, Option<f64>>(col_idx)
+                    .ok()
+                    .flatten()
+                    .map(|v| v.to_string())
+                    .unwrap_or_default(),
+                "numeric" => row
+                    .try_get::<_, Option<rust_decimal::Decimal>>(col_idx)
+                    .ok()
+                    .flatten()
+                    .map(|v| v.to_string())
+                    .unwrap_or_default(),
+                "bool" => row
+                    .try_get::<_, Option<bool>>(col_idx)
+                    .ok()
+                    .flatten()
+                    .map(|v| v.to_string())
+                    .unwrap_or_default(),
+                "date" | "timestamp" => row
+                    .try_get::<_, Option<String>>(col_idx)
+                    .ok()
+                    .flatten()
+                    .unwrap_or_default(),
+                _ => row
+                    .try_get::<_, Option<String>>(col_idx)
+                    .ok()
+                    .flatten()
+                    .unwrap_or_default(),
+            };
+
+            book.get_sheet_by_name_mut(sheet_name)
+                .unwrap()
+                .get_cell_mut((col_idx as u32 + 1, row_idx))
+                .set_value(value);
+        }
+        row_idx += 1;
+    }
+
+    // Tulis ke buffer
+    let mut buffer = Vec::new();
+    writer::xlsx::write_writer(&book, &mut buffer).map_err(|_| {
+        common::error_message(StatusCode::INTERNAL_SERVER_ERROR, "xlsx.writeFailed")
+    })?;
+
+    Ok(buffer)
+}
+
+fn col_idx_to_excel_col(mut col: usize) -> String {
+    let mut s = String::new();
+    while col > 0 {
+        let rem = (col - 1) % 26;
+        s.insert(0, (b'A' + rem as u8) as char);
+        col = (col - 1) / 26;
+    }
+    s
+}
+
+pub fn rows_to_xlsx_bytes(first_amount_combined: i16, rows: &[Row]) -> poem::Result<Vec<u8>> {
+    if rows.is_empty() {
+        return Ok(vec![]);
+    }
+
+    // Buat workbook baru
+    let mut book = new_file();
+    let sheet_name = "Sheet1";
+
+    // Tambahkan sheet baru
+    let _ = book.new_sheet(sheet_name);
+
+    let sheet = book.get_sheet_by_name_mut(sheet_name).unwrap();
+
+    let columns = rows[0].columns();
+    let mut row_idx = 1;
+
+    // Header (row 1)
+    for (col_idx, col) in columns.iter().enumerate() {
+        let cell_addr = format!("{}{}", col_idx_to_excel_col(col_idx + 1), row_idx);
+        sheet.get_cell_mut(&cell_addr).set_value(col.name());
+    }
+
+    row_idx += 1;
+
+    // Data (mulai row 2)
+    for row in rows {
+        for (col_idx, column) in row.columns().iter().enumerate() {
+            let value = match column.type_().name() {
+                "oid" => row
+                    .try_get::<_, Option<u32>>(col_idx)
+                    .ok()
+                    .flatten()
+                    .map(|v| v.to_string())
+                    .unwrap_or_default(),
+                "int2" => row
+                    .try_get::<_, Option<i16>>(col_idx)
+                    .ok()
+                    .flatten()
+                    .map(|v| v.to_string())
+                    .unwrap_or_default(),
+                "int4" => row
+                    .try_get::<_, Option<i32>>(col_idx)
+                    .ok()
+                    .flatten()
+                    .map(|v| v.to_string())
+                    .unwrap_or_default(),
+                "int8" => row
+                    .try_get::<_, Option<i64>>(col_idx)
+                    .ok()
+                    .flatten()
+                    .map(|v| v.to_string())
+                    .unwrap_or_default(),
+                "float4" | "float8" => row
+                    .try_get::<_, Option<f64>>(col_idx)
+                    .ok()
+                    .flatten()
+                    .map(|v| v.to_string())
+                    .unwrap_or_default(),
+                "numeric" => row
+                    .try_get::<_, Option<rust_decimal::Decimal>>(col_idx)
+                    .ok()
+                    .flatten()
+                    .map(|v| v.to_string())
+                    .unwrap_or_default(),
+                "bool" => row
+                    .try_get::<_, Option<bool>>(col_idx)
+                    .ok()
+                    .flatten()
+                    .map(|v| v.to_string())
+                    .unwrap_or_default(),
+                "date" | "timestamp" => row
+                    .try_get::<_, Option<String>>(col_idx)
+                    .ok()
+                    .flatten()
+                    .unwrap_or_default(),
+                _ => row
+                    .try_get::<_, Option<String>>(col_idx)
+                    .ok()
+                    .flatten()
+                    .unwrap_or_default(),
+            };
+
+            let cell_addr = format!("{}{}", col_idx_to_excel_col(col_idx + 1), row_idx);
+            sheet.get_cell_mut(&cell_addr).set_value(value);
+        }
+        row_idx += 1;
+    }
+
+    // Merge cells sesuai first_amount_combined
+    if first_amount_combined > 0 {
+        let row_total = rows.len() as u32;
+        let col_total = (columns.len() as i16).min(first_amount_combined) as usize;
+
+        for col in 0..col_total {
+            let mut start_row = 2; // mulai dari baris data pertama
+            let mut last_value = sheet
+                .get_cell_mut(&format!("{}{}", col_idx_to_excel_col(col + 1), start_row))
+                .get_value()
+                .to_string();
+
+            for row in 3..=row_total + 1 {
+                let current_value = sheet
+                    .get_cell_mut(&format!("{}{}", col_idx_to_excel_col(col + 1), row))
+                    .get_value()
+                    .to_string();
+
+                if current_value != last_value {
+                    if row - start_row > 1 {
+                        let start_cell = format!("{}{}", col_idx_to_excel_col(col + 1), start_row);
+                        let end_cell = format!("{}{}", col_idx_to_excel_col(col + 1), row - 1);
+                        sheet.merge_cells(&start_cell, &end_cell);
+                    }
+                    start_row = row;
+                    last_value = current_value;
+                }
+            }
+
+            // Merge terakhir
+            if row_total + 1 - start_row >= 1 {
+                if row_total + 1 - start_row > 1 {
+                    let start_cell = format!("{}{}", col_idx_to_excel_col(col + 1), start_row);
+                    let end_cell = format!("{}{}", col_idx_to_excel_col(col + 1), row_total + 1);
+                    sheet.merge_cells(&start_cell, &end_cell);
+                }
+            }
+        }
+    }
+
+    // Tulis workbook ke buffer
+    let mut buffer = Vec::new();
+    writer::xlsx::write_writer(&book, &mut buffer).map_err(|_| {
+        common::error_message(StatusCode::INTERNAL_SERVER_ERROR, "xlsx.writeFailed")
+    })?;
+
+    Ok(buffer)
 }
 
 pub fn rows_to_csv_string(header_flag: i16, delimiter: &str, rows: &[Row]) -> String {

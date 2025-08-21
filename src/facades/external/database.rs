@@ -7,8 +7,8 @@ use crate::schema::{tbl_ext_database_query, tbl_query_manual};
 use crate::utils::common::{
     self, convert_to_count_query, extract_columns_info, extract_query_parts, is_only_comment,
     is_sql_type, rows_to_csv_string, rows_to_insert_query_string, rows_to_json,
-    rows_to_json_string, rows_to_update_query_string, rows_to_xml_string, split_manual_query,
-    validate_id, validation_error_response,
+    rows_to_json_string, rows_to_update_query_string, rows_to_xlsx_bytes, rows_to_xml_string,
+    split_manual_query, validate_id, validation_error_response,
 };
 use crate::{db::DbPool, models::common::Pagination};
 use chrono::Utc;
@@ -831,6 +831,38 @@ pub async fn query_manual_sql_update(
             "information.notFound",
         )),
     }
+}
+
+#[handler]
+pub async fn query_manual_xlsx(
+    pool: poem::web::Data<&DbPool>,
+    // _: crate::auth::middleware::JwtAuth,
+    Path((query_manual_id, first_amount_combined)): Path<(i64, i16)>,
+) -> poem::Result<impl IntoResponse> {
+    validate_id(query_manual_id)?;
+
+    let conn = &mut pool.get().map_err(|_| {
+        common::error_message(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "information.connectionFailed",
+        )
+    })?;
+
+    let (rows, _) = get_query_manual_row(conn, query_manual_id).await?;
+    let results = rows_to_xlsx_bytes(first_amount_combined, &rows)?;
+
+    Ok(poem::Response::builder()
+        .status(StatusCode::OK)
+        .header(
+            "Content-Type",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+        .header(
+            "Content-Disposition",
+            "attachment; filename=\"export.xlsx\"",
+        )
+        .body(results))
+    // Ok(Json(DataResponse { data: results }))
 }
 
 #[handler]

@@ -43,6 +43,10 @@ pub fn routes() -> Route {
             get(database::query_manual_sql_update),
         )
         .at(
+            "/:id/:first_amount_combined/database-query-manual.xlsx",
+            get(database::query_manual_xlsx),
+        )
+        .at(
             "/:id/:header_flag/:delimiter/database-query-manual-csv.json",
             get(database::query_manual_csv),
         )
