@@ -43,6 +43,18 @@ pub fn routes() -> Route {
             get(database::query_manual_sql_update),
         )
         .at(
+            "/:id/:header_flag/:delimiter/database-query-manual-csv.json",
+            get(database::query_manual_csv),
+        )
+        .at(
+            "/:id/database-query-manual.json",
+            get(database::query_manual_json),
+        )
+        .at(
+            "/:id/database-query-manual-xml.json",
+            get(database::query_manual_xml),
+        )
+        .at(
             "/:id/:name/database-query-exact-object-run.json",
             post(database::query_exact_object_run),
         )

@@ -1,7 +1,7 @@
 use rand::Rng;
 use regex::Regex;
 use rust_decimal::Decimal;
-use serde_json::{Map, Value, json};
+use serde_json::{Map, Value, json as json_macro};
 use std::fmt::Write;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio_postgres::Row;
@@ -90,10 +90,10 @@ pub fn validation_error_response(e: ValidationErrors) -> poem::Error {
             .map(|msg| msg.to_string())
             .collect();
 
-        details.insert(field.to_string(), json!(messages));
+        details.insert(field.to_string(), json_macro!(messages));
     }
 
-    let body = json!({
+    let body = json_macro!({
         "error": "Validation failed",
         "details": details
     });
@@ -451,6 +451,207 @@ pub fn rows_to_update_query_string(
         result.push_str(&update_sql);
     }
 
+    result
+}
+
+pub fn rows_to_csv_string(header_flag: i16, delimiter: &str, rows: &[Row]) -> String {
+    let mut result = String::new();
+
+    if rows.is_empty() {
+        return result;
+    }
+
+    // Ambil nama kolom dari baris pertama
+    if header_flag == 1 {
+        let header = rows[0]
+            .columns()
+            .iter()
+            .map(|col| col.name())
+            .collect::<Vec<_>>()
+            .join(delimiter);
+        result.push_str(&header);
+        result.push('\n');
+    }
+
+    for row in rows {
+        let mut values = Vec::new();
+
+        for (i, column) in row.columns().iter().enumerate() {
+            let value = match column.type_().name() {
+                "oid" => {
+                    let v: Option<Oid> = row.try_get(i).ok();
+                    v.map(|oid| oid.to_string())
+                        .unwrap_or_else(|| "".to_string())
+                }
+                "int2" => {
+                    let v: i16 = row.get(i);
+                    v.to_string()
+                }
+                "int4" => {
+                    let v: i32 = row.get(i);
+                    v.to_string()
+                }
+                "int8" => {
+                    let v: Option<i64> = row.get(i);
+                    v.map(|val| val.to_string()).unwrap_or_default()
+                }
+                "float4" | "float8" => {
+                    let v: f64 = row.get(i);
+                    if v.is_finite() {
+                        v.to_string()
+                    } else {
+                        "".to_string()
+                    }
+                }
+                "numeric" => {
+                    let v: Option<Decimal> = row.get(i);
+                    v.map(|val| val.to_string()).unwrap_or_default()
+                }
+                "bool" => {
+                    let v: bool = row.get(i);
+                    v.to_string()
+                }
+                "date" | "timestamp" => {
+                    let val: Option<String> = row.try_get(i).ok();
+                    val.unwrap_or_default()
+                }
+                _ => {
+                    let v: Option<String> = row.get(i);
+                    v.map(|s| s.replace('"', "\"\"")).unwrap_or_default()
+                }
+            };
+
+            // Bungkus string dengan kutip jika mengandung koma, kutip, atau newline
+            let formatted_value =
+                if value.contains(delimiter) || value.contains('"') || value.contains('\n') {
+                    format!("\"{}\"", value.replace('"', "\"\""))
+                } else {
+                    value
+                };
+
+            values.push(formatted_value);
+        }
+
+        result.push_str(&values.join(delimiter));
+        result.push('\n');
+    }
+
+    result
+}
+
+pub fn rows_to_json_string(rows: &[Row]) -> String {
+    let mut json_array = Vec::new();
+
+    for row in rows {
+        let mut json_object = serde_json::Map::new();
+
+        for (i, column) in row.columns().iter().enumerate() {
+            let col_name = column.name();
+
+            let value = match column.type_().name() {
+                "oid" => {
+                    let v: Option<Oid> = row.try_get(i).ok();
+                    v.map(|oid| json_macro!(oid)).unwrap_or(Value::Null)
+                }
+                "int2" => json_macro!(row.get::<_, i16>(i)),
+                "int4" => json_macro!(row.get::<_, i32>(i)),
+                "int8" => {
+                    let v: Option<i64> = row.try_get(i).ok();
+                    v.map_or_else(|| Value::Null, |v| json_macro!(v))
+                }
+                "float4" | "float8" => {
+                    let v: f64 = row.get(i);
+                    if v.is_finite() {
+                        json_macro!(v)
+                    } else {
+                        Value::Null
+                    }
+                }
+                "numeric" => {
+                    let v: Option<Decimal> = row.try_get(i).ok();
+                    v.map(|d| json_macro!(d.to_string())).unwrap_or(Value::Null)
+                }
+                "bool" => json_macro!(row.get::<_, bool>(i)),
+                "date" | "timestamp" => {
+                    let val: Option<String> = row.try_get(i).ok();
+                    val.map_or_else(|| Value::Null, |val| json_macro!(val))
+                }
+                _ => {
+                    let v: Option<String> = row.try_get(i).ok();
+                    v.map_or_else(|| Value::Null, |v| json_macro!(v))
+                }
+            };
+
+            json_object.insert(col_name.to_string(), value);
+        }
+
+        json_array.push(Value::Object(json_object));
+    }
+
+    serde_json::to_string_pretty(&Value::Array(json_array)).unwrap_or("[]".to_string())
+}
+
+pub fn rows_to_xml_string(table_name: &str, rows: &[Row]) -> String {
+    let mut result = String::new();
+    result.push_str("<List>\n");
+
+    for row in rows {
+        result.push_str(&format!("  <{}>\n", table_name));
+
+        for (i, column) in row.columns().iter().enumerate() {
+            let col_name = column.name();
+            let value = match column.type_().name() {
+                "oid" => {
+                    let v: Option<Oid> = row.try_get(i).ok();
+                    v.map(|oid| oid.to_string()).unwrap_or_default()
+                }
+                "int2" => row.get::<_, i16>(i).to_string(),
+                "int4" => row.get::<_, i32>(i).to_string(),
+                "int8" => {
+                    let v: Option<i64> = row.get(i);
+                    v.map_or(String::new(), |val| val.to_string())
+                }
+                "float4" | "float8" => {
+                    let v: f64 = row.get(i);
+                    if v.is_finite() {
+                        v.to_string()
+                    } else {
+                        String::new()
+                    }
+                }
+                "numeric" => {
+                    let v: Option<Decimal> = row.get(i);
+                    v.map(|val| val.to_string()).unwrap_or_default()
+                }
+                "bool" => row.get::<_, bool>(i).to_string(),
+                "date" | "timestamp" => {
+                    let val: Option<String> = row.try_get(i).ok();
+                    val.unwrap_or_default()
+                }
+                _ => {
+                    let v: Option<String> = row.get(i);
+                    v.unwrap_or_default()
+                }
+            };
+
+            // Escape karakter XML khusus: &, <, >, ", '
+            let escaped_value = value
+                .replace('&', "&amp;")
+                .replace('<', "&lt;")
+                .replace('>', "&gt;")
+                .replace('"', "&quot;")
+                .replace('\'', "&apos;");
+
+            result.push_str(&format!(
+                "    <{}>{}</{}>\n",
+                col_name, escaped_value, col_name
+            ));
+        }
+
+        result.push_str(&format!("  </{}>\n", table_name));
+    }
+
+    result.push_str("</List>\n");
     result
 }
 
