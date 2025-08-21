@@ -13,17 +13,140 @@ use crate::utils::common::{
 use crate::{db::DbPool, models::common::Pagination};
 use chrono::Utc;
 use diesel::prelude::*;
+use futures::future::ok;
 // use fancy_regex::Regex;
-use poem::IntoResponse;
 use poem::web::Query;
+use poem::{IntoResponse, Result};
 use poem::{
     handler,
     http::StatusCode,
     web::{Json, Path},
 };
 use serde_json::{Value, json};
-use tokio_postgres::NoTls;
+use tokio_postgres::{Client, NoTls, Row};
 use validator::Validate;
+
+fn parse_pagination(pagination: &Pagination) -> (i64, i64) {
+    let start = pagination.start.unwrap_or(0);
+    let length = pagination.length.unwrap_or(10).min(100);
+    (start, length)
+}
+
+fn get_ext_database_info(
+    conn: &mut PgConnection,
+    ext_database_id: i16,
+) -> poem::Result<(String, String, String)> {
+    tbl_ext_database
+        .filter(id.eq(ext_database_id))
+        .filter(is_del.eq(0))
+        .select((username, password, db_connection))
+        .first::<(String, String, String)>(conn)
+        .map_err(|_| common::error_message(StatusCode::NOT_FOUND, "information.notFound"))
+}
+
+fn build_connection_string(usr: &str, pass: &str, db_conn: &str) -> String {
+    format!("postgres://{}:{}@{}", usr, pass, db_conn)
+}
+
+async fn connect_to_external_database(connection_str: &str) -> poem::Result<Client> {
+    let (client, connection) = tokio_postgres::connect(connection_str, NoTls)
+        .await
+        .map_err(|e| {
+            eprintln!("Database connection error: {}", e);
+            poem::Error::from_status(StatusCode::INTERNAL_SERVER_ERROR)
+        })?;
+
+    // Jalankan koneksi di background
+    tokio::spawn(async move {
+        if let Err(e) = connection.await {
+            eprintln!("Connection error: {}", e);
+        }
+    });
+
+    Ok(client)
+}
+
+//perlu di gabungkan
+fn get_query_manual_detail(
+    conn: &mut PgConnection,
+    query_manual_id: i64,
+) -> poem::Result<(i16, String)> {
+    tbl_query_manual::table
+        .filter(tbl_query_manual::id.eq(query_manual_id))
+        .select((tbl_query_manual::ext_database_id, tbl_query_manual::query))
+        .first(conn)
+        .map_err(|_| common::error_message(StatusCode::NOT_FOUND, "Not Found"))
+}
+
+async fn get_query_manual_client(
+    conn: &mut PgConnection,
+    query_manual_id: i64,
+) -> poem::Result<(Client, String)> {
+    let (ext_database_id, query_str) = get_query_manual_detail(conn, query_manual_id)?;
+    let client = get_external_pg_client(conn, ext_database_id).await?;
+    Ok((client, query_str))
+}
+
+async fn get_query_manual_row(
+    conn: &mut PgConnection,
+    query_manual_id: i64,
+) -> poem::Result<(Vec<Row>, String)> {
+    let (client, query_str) = get_query_manual_client(conn, query_manual_id).await?;
+    let rows = client.query(&query_str, &[]).await.map_err(|e| {
+        eprintln!("Query error: {}", e);
+        poem::Error::from_status(StatusCode::INTERNAL_SERVER_ERROR)
+    })?;
+    Ok((rows, query_str))
+}
+
+async fn get_external_pg_client(
+    conn: &mut PgConnection,
+    ext_database_id: i16,
+) -> poem::Result<Client> {
+    let (usr, pass, db_conn) = get_ext_database_info(conn, ext_database_id)?;
+    let connection_str = build_connection_string(&usr, &pass, &db_conn);
+    connect_to_external_database(&connection_str).await
+}
+
+async fn query_with_pagination(
+    client: &Client,
+    base_query: &str,
+    start: i64,
+    length: i64,
+) -> poem::Result<PaginatedResponse<Value>> {
+    if let Some(count_query) = convert_to_count_query(base_query) {
+        let total: i64 = client
+            .query_one(&count_query, &[])
+            .await
+            .map(|row| row.get(0))
+            .map_err(|_| {
+                common::error_message(StatusCode::INTERNAL_SERVER_ERROR, "information.notFound")
+            })?;
+
+        let data = if total > 0 {
+            let paginated_query = format!(
+                "{} OFFSET {} ROWS FETCH NEXT {} ROWS ONLY",
+                base_query, start, length
+            );
+
+            let rows = client.query(&paginated_query, &[]).await.map_err(|e| {
+                eprintln!("Query error: {}", e);
+                poem::Error::from_status(StatusCode::INTERNAL_SERVER_ERROR)
+            })?;
+
+            rows_to_json(&rows)
+        } else {
+            vec![]
+        };
+
+        Ok(PaginatedResponse { total, data })
+    } else {
+        Ok(PaginatedResponse {
+            total: 0,
+            data: vec![],
+        })
+    }
+}
 
 #[handler]
 pub fn list(
@@ -31,8 +154,7 @@ pub fn list(
     _: crate::auth::middleware::JwtAuth,
     Query(pagination): Query<Pagination>,
 ) -> poem::Result<impl IntoResponse> {
-    let start = pagination.start.unwrap_or(0);
-    let length = pagination.length.unwrap_or(10).min(100);
+    let (start, length) = parse_pagination(&pagination);
 
     let mut query = tbl_ext_database.into_boxed();
     if let Some(ref term) = pagination.search {
@@ -267,25 +389,7 @@ pub async fn connect(
         )
     })?;
 
-    let credential_ext_database: (String, String, String) = tbl_ext_database
-        .filter(id.eq(ext_database_id))
-        .filter(is_del.eq(0))
-        .select((username, password, db_connection))
-        .first(conn)
-        .map_err(|_| common::error_message(StatusCode::NOT_FOUND, "information.notFound"))?;
-
-    let ext_database_connection = format!(
-        "postgres://{}:{}@{}",
-        credential_ext_database.0, credential_ext_database.1, credential_ext_database.2
-    );
-
-    let _ = tokio_postgres::connect(&ext_database_connection, NoTls)
-        .await
-        .map_err(|e| {
-            eprintln!("Connection error: {}", e);
-            common::error_message(StatusCode::BAD_GATEWAY, "information.connectionFailed")
-        })?;
-
+    let _ = get_external_pg_client(conn, ext_database_id).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -296,8 +400,7 @@ pub async fn query_object_list(
     Path(ext_database_id): Path<i16>,
     Query(pagination): Query<Pagination>,
 ) -> poem::Result<impl IntoResponse> {
-    let start = pagination.start.unwrap_or(0);
-    let length = pagination.length.unwrap_or(10).min(100);
+    let (start, length) = parse_pagination(&pagination);
 
     let conn = &mut pool.get().map_err(|_| {
         common::error_message(
@@ -306,30 +409,7 @@ pub async fn query_object_list(
         )
     })?;
 
-    let credential_ext_database: (String, String, String) = tbl_ext_database
-        .filter(id.eq(ext_database_id))
-        .filter(is_del.eq(0))
-        .select((username, password, db_connection))
-        .first(conn)
-        .map_err(|_| common::error_message(StatusCode::NOT_FOUND, "information.notFound"))?;
-
-    let ext_database_connection = format!(
-        "postgres://{}:{}@{}",
-        credential_ext_database.0, credential_ext_database.1, credential_ext_database.2
-    );
-
-    let (client, connection) = tokio_postgres::connect(&ext_database_connection, NoTls)
-        .await
-        .map_err(|e| {
-            eprintln!("Connection error: {}", e);
-            common::error_message(StatusCode::BAD_GATEWAY, "information.connectionFailed")
-        })?;
-
-    tokio::spawn(async move {
-        if let Err(e) = connection.await {
-            eprintln!("Connection error: {}", e);
-        }
-    });
+    let client = get_external_pg_client(conn, ext_database_id).await?;
 
     let query = r#"
         SELECT
@@ -371,46 +451,8 @@ pub async fn query_object_list(
         --ORDER BY {2}
     "#;
 
-    if let Some(count_query) = convert_to_count_query(&query) {
-        let row = match client.query_one(&count_query, &[]).await {
-            Ok(row) => row,
-            Err(_) => {
-                return Err(common::error_message(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "information.notFound",
-                ));
-            }
-        };
-
-        let total: i64 = row.get(0);
-        if total > 0 {
-            let paginated_query = format!(
-                "{0} OFFSET {1} ROWS FETCH NEXT {2} ROWS ONLY",
-                &query, start, length
-            );
-            let rows = client.query(&paginated_query, &[]).await.map_err(|e| {
-                eprintln!("Query error: {}", e);
-                poem::Error::from_status(StatusCode::INTERNAL_SERVER_ERROR)
-            })?;
-
-            let results = rows_to_json(&rows);
-
-            Ok(Json(PaginatedResponse {
-                total: total as i64,
-                data: results,
-            }))
-        } else {
-            Ok(Json(PaginatedResponse {
-                total: 0,
-                data: vec![],
-            }))
-        }
-    } else {
-        Ok(Json(PaginatedResponse {
-            total: 0,
-            data: vec![],
-        }))
-    }
+    let response = query_with_pagination(&client, query, start, length).await?;
+    Ok(Json(response))
 }
 
 #[handler]
@@ -420,8 +462,7 @@ pub fn query_whitelist_list(
     Path(ext_database_id): Path<i16>,
     Query(pagination): Query<Pagination>,
 ) -> poem::Result<impl IntoResponse> {
-    let start = pagination.start.unwrap_or(0);
-    let length = pagination.length.unwrap_or(10).min(100);
+    let (start, length) = parse_pagination(&pagination);
 
     let mut query = tbl_ext_database_query::table.into_boxed();
     query = query.filter(tbl_ext_database_query::ext_database_id.eq(ext_database_id));
@@ -500,30 +541,7 @@ pub async fn query_manual_run(
         )
     })?;
 
-    let credential_ext_database: (String, String, String) = tbl_ext_database
-        .filter(id.eq(ext_database_id))
-        .filter(is_del.eq(0))
-        .select((username, password, db_connection))
-        .first(conn)
-        .map_err(|_| common::error_message(StatusCode::NOT_FOUND, "information.notFound"))?;
-
-    let ext_database_connection = format!(
-        "postgres://{}:{}@{}",
-        credential_ext_database.0, credential_ext_database.1, credential_ext_database.2
-    );
-
-    let (client, connection) = tokio_postgres::connect(&ext_database_connection, NoTls)
-        .await
-        .map_err(|e| {
-            eprintln!("Connection error: {}", e);
-            common::error_message(StatusCode::BAD_GATEWAY, "information.connectionFailed")
-        })?;
-
-    tokio::spawn(async move {
-        if let Err(e) = connection.await {
-            eprintln!("Connection error: {}", e);
-        }
-    });
+    let client = get_external_pg_client(conn, ext_database_id).await?;
 
     let mut success_response: Option<Value> = None;
     let mut results: Vec<Value> = Vec::new();
@@ -539,7 +557,6 @@ pub async fn query_manual_run(
         let mut error: Option<String> = None;
         match extract_query_parts(&part) {
             Some((name, action)) => {
-                // println!("Action: {}, Name: {}", action, name);
                 if is_sql_type(&part, "(SELECT|WITH)") && results.len() == 0 {
                     let query = format!("{0} LIMIT 1", &part);
                     match client.query(&query, &[]).await {
@@ -575,7 +592,7 @@ pub async fn query_manual_run(
                         }
                         Err(e) => {
                             results.push(json!({
-                                "error": format!("{}", e)
+                                "message": format!("{}", e)
                             }));
                         }
                     }
@@ -684,8 +701,7 @@ pub async fn query_manual_list(
     Query(pagination): Query<Pagination>,
 ) -> poem::Result<impl IntoResponse> {
     validate_id(query_manual_id)?;
-    let start = pagination.start.unwrap_or(0);
-    let length = pagination.length.unwrap_or(10).min(100);
+    let (start, length) = parse_pagination(&pagination);
 
     let conn = &mut pool.get().map_err(|_| {
         common::error_message(
@@ -694,39 +710,8 @@ pub async fn query_manual_list(
         )
     })?;
 
-    let query_manual_detail: (i16, String) = tbl_query_manual::table
-        .filter(tbl_query_manual::id.eq(query_manual_id))
-        .select((tbl_query_manual::ext_database_id, tbl_query_manual::query))
-        .first(conn)
-        .map_err(|_| common::error_message(StatusCode::NOT_FOUND, "Not Found"))?;
-
-    let credential_ext_database: (String, String, String) = tbl_ext_database
-        .filter(id.eq(query_manual_detail.0))
-        .filter(is_del.eq(0))
-        .select((username, password, db_connection))
-        .first(conn)
-        .map_err(|_| common::error_message(StatusCode::NOT_FOUND, "information.notFound"))?;
-
-    let ext_database_connection = format!(
-        "postgres://{}:{}@{}",
-        credential_ext_database.0, credential_ext_database.1, credential_ext_database.2
-    );
-
-    let (client, connection) = tokio_postgres::connect(&ext_database_connection, NoTls)
-        .await
-        .map_err(|e| {
-            eprintln!("Database connection error: {}", e);
-            poem::Error::from_status(StatusCode::INTERNAL_SERVER_ERROR)
-        })?;
-
-    // Jalankan koneksi di background
-    tokio::spawn(async move {
-        if let Err(e) = connection.await {
-            eprintln!("Connection error: {}", e);
-        }
-    });
-
-    if let Some(count_query) = convert_to_count_query(&query_manual_detail.1) {
+    let (client, query_str) = get_query_manual_client(conn, query_manual_id).await?;
+    if let Some(count_query) = convert_to_count_query(&query_str) {
         let row = match client.query_one(&count_query, &[]).await {
             Ok(row) => row,
             Err(_) => {
@@ -741,7 +726,7 @@ pub async fn query_manual_list(
         if total > 0 {
             let paginated_query = format!(
                 "{0} OFFSET {1} ROWS FETCH NEXT {2} ROWS ONLY",
-                &query_manual_detail.1, start, length
+                &query_str, start, length
             );
             let rows = client.query(&paginated_query, &[]).await.map_err(|e| {
                 eprintln!("Query error: {}", e);
@@ -782,46 +767,7 @@ pub async fn query_manual_all_list(
         )
     })?;
 
-    let query_manual_detail: (i16, String) = tbl_query_manual::table
-        .filter(tbl_query_manual::id.eq(query_manual_id))
-        .select((tbl_query_manual::ext_database_id, tbl_query_manual::query))
-        .first(conn)
-        .map_err(|_| common::error_message(StatusCode::NOT_FOUND, "Not Found"))?;
-
-    let credential_ext_database: (String, String, String) = tbl_ext_database
-        .filter(id.eq(query_manual_detail.0))
-        .filter(is_del.eq(0))
-        .select((username, password, db_connection))
-        .first(conn)
-        .map_err(|_| common::error_message(StatusCode::NOT_FOUND, "information.notFound"))?;
-
-    let ext_database_connection = format!(
-        "postgres://{}:{}@{}",
-        credential_ext_database.0, credential_ext_database.1, credential_ext_database.2
-    );
-
-    let (client, connection) = tokio_postgres::connect(&ext_database_connection, NoTls)
-        .await
-        .map_err(|e| {
-            eprintln!("Database connection error: {}", e);
-            poem::Error::from_status(StatusCode::INTERNAL_SERVER_ERROR)
-        })?;
-
-    // Jalankan koneksi di background
-    tokio::spawn(async move {
-        if let Err(e) = connection.await {
-            eprintln!("Connection error: {}", e);
-        }
-    });
-
-    let rows = client
-        .query(&query_manual_detail.1, &[])
-        .await
-        .map_err(|e| {
-            eprintln!("Query error: {}", e);
-            poem::Error::from_status(StatusCode::INTERNAL_SERVER_ERROR)
-        })?;
-
+    let (rows, _) = get_query_manual_row(conn, query_manual_id).await?;
     let results = rows_to_json(&rows);
     Ok(Json(DataResponse { data: results }))
 }
@@ -845,47 +791,8 @@ pub async fn query_manual_sql_insert(
         )
     })?;
 
-    let query_manual_detail: (i16, String) = tbl_query_manual::table
-        .filter(tbl_query_manual::id.eq(query_manual_id))
-        .select((tbl_query_manual::ext_database_id, tbl_query_manual::query))
-        .first(conn)
-        .map_err(|_| common::error_message(StatusCode::NOT_FOUND, "Not Found"))?;
-
-    let credential_ext_database: (String, String, String) = tbl_ext_database
-        .filter(id.eq(query_manual_detail.0))
-        .filter(is_del.eq(0))
-        .select((username, password, db_connection))
-        .first(conn)
-        .map_err(|_| common::error_message(StatusCode::NOT_FOUND, "information.notFound"))?;
-
-    let ext_database_connection = format!(
-        "postgres://{}:{}@{}",
-        credential_ext_database.0, credential_ext_database.1, credential_ext_database.2
-    );
-
-    let (client, connection) = tokio_postgres::connect(&ext_database_connection, NoTls)
-        .await
-        .map_err(|e| {
-            eprintln!("Database connection error: {}", e);
-            poem::Error::from_status(StatusCode::INTERNAL_SERVER_ERROR)
-        })?;
-
-    // Jalankan koneksi di background
-    tokio::spawn(async move {
-        if let Err(e) = connection.await {
-            eprintln!("Connection error: {}", e);
-        }
-    });
-
-    let rows = client
-        .query(&query_manual_detail.1, &[])
-        .await
-        .map_err(|e| {
-            eprintln!("Query error: {}", e);
-            poem::Error::from_status(StatusCode::INTERNAL_SERVER_ERROR)
-        })?;
-
-    match extract_query_parts(&query_manual_detail.1) {
+    let (rows, query_str) = get_query_manual_row(conn, query_manual_id).await?;
+    match extract_query_parts(&query_str) {
         Some((name, _)) => {
             let results = rows_to_insert_query_string(
                 &name,
@@ -917,47 +824,8 @@ pub async fn query_manual_sql_update(
         )
     })?;
 
-    let query_manual_detail: (i16, String) = tbl_query_manual::table
-        .filter(tbl_query_manual::id.eq(query_manual_id))
-        .select((tbl_query_manual::ext_database_id, tbl_query_manual::query))
-        .first(conn)
-        .map_err(|_| common::error_message(StatusCode::NOT_FOUND, "Not Found"))?;
-
-    let credential_ext_database: (String, String, String) = tbl_ext_database
-        .filter(id.eq(query_manual_detail.0))
-        .filter(is_del.eq(0))
-        .select((username, password, db_connection))
-        .first(conn)
-        .map_err(|_| common::error_message(StatusCode::NOT_FOUND, "information.notFound"))?;
-
-    let ext_database_connection = format!(
-        "postgres://{}:{}@{}",
-        credential_ext_database.0, credential_ext_database.1, credential_ext_database.2
-    );
-
-    let (client, connection) = tokio_postgres::connect(&ext_database_connection, NoTls)
-        .await
-        .map_err(|e| {
-            eprintln!("Database connection error: {}", e);
-            poem::Error::from_status(StatusCode::INTERNAL_SERVER_ERROR)
-        })?;
-
-    // Jalankan koneksi di background
-    tokio::spawn(async move {
-        if let Err(e) = connection.await {
-            eprintln!("Connection error: {}", e);
-        }
-    });
-
-    let rows = client
-        .query(&query_manual_detail.1, &[])
-        .await
-        .map_err(|e| {
-            eprintln!("Query error: {}", e);
-            poem::Error::from_status(StatusCode::INTERNAL_SERVER_ERROR)
-        })?;
-
-    match extract_query_parts(&query_manual_detail.1) {
+    let (rows, query_str) = get_query_manual_row(conn, query_manual_id).await?;
+    match extract_query_parts(&query_str) {
         Some((name, _)) => {
             let results = rows_to_update_query_string(
                 &name,
@@ -989,46 +857,7 @@ pub async fn query_manual_csv(
         )
     })?;
 
-    let query_manual_detail: (i16, String) = tbl_query_manual::table
-        .filter(tbl_query_manual::id.eq(query_manual_id))
-        .select((tbl_query_manual::ext_database_id, tbl_query_manual::query))
-        .first(conn)
-        .map_err(|_| common::error_message(StatusCode::NOT_FOUND, "Not Found"))?;
-
-    let credential_ext_database: (String, String, String) = tbl_ext_database
-        .filter(id.eq(query_manual_detail.0))
-        .filter(is_del.eq(0))
-        .select((username, password, db_connection))
-        .first(conn)
-        .map_err(|_| common::error_message(StatusCode::NOT_FOUND, "information.notFound"))?;
-
-    let ext_database_connection = format!(
-        "postgres://{}:{}@{}",
-        credential_ext_database.0, credential_ext_database.1, credential_ext_database.2
-    );
-
-    let (client, connection) = tokio_postgres::connect(&ext_database_connection, NoTls)
-        .await
-        .map_err(|e| {
-            eprintln!("Database connection error: {}", e);
-            poem::Error::from_status(StatusCode::INTERNAL_SERVER_ERROR)
-        })?;
-
-    // Jalankan koneksi di background
-    tokio::spawn(async move {
-        if let Err(e) = connection.await {
-            eprintln!("Connection error: {}", e);
-        }
-    });
-
-    let rows = client
-        .query(&query_manual_detail.1, &[])
-        .await
-        .map_err(|e| {
-            eprintln!("Query error: {}", e);
-            poem::Error::from_status(StatusCode::INTERNAL_SERVER_ERROR)
-        })?;
-
+    let (rows, _) = get_query_manual_row(conn, query_manual_id).await?;
     let results = rows_to_csv_string(header_flag, &delimiter, &rows);
     Ok(Json(DataResponse { data: results }))
 }
@@ -1048,46 +877,7 @@ pub async fn query_manual_json(
         )
     })?;
 
-    let query_manual_detail: (i16, String) = tbl_query_manual::table
-        .filter(tbl_query_manual::id.eq(query_manual_id))
-        .select((tbl_query_manual::ext_database_id, tbl_query_manual::query))
-        .first(conn)
-        .map_err(|_| common::error_message(StatusCode::NOT_FOUND, "Not Found"))?;
-
-    let credential_ext_database: (String, String, String) = tbl_ext_database
-        .filter(id.eq(query_manual_detail.0))
-        .filter(is_del.eq(0))
-        .select((username, password, db_connection))
-        .first(conn)
-        .map_err(|_| common::error_message(StatusCode::NOT_FOUND, "information.notFound"))?;
-
-    let ext_database_connection = format!(
-        "postgres://{}:{}@{}",
-        credential_ext_database.0, credential_ext_database.1, credential_ext_database.2
-    );
-
-    let (client, connection) = tokio_postgres::connect(&ext_database_connection, NoTls)
-        .await
-        .map_err(|e| {
-            eprintln!("Database connection error: {}", e);
-            poem::Error::from_status(StatusCode::INTERNAL_SERVER_ERROR)
-        })?;
-
-    // Jalankan koneksi di background
-    tokio::spawn(async move {
-        if let Err(e) = connection.await {
-            eprintln!("Connection error: {}", e);
-        }
-    });
-
-    let rows = client
-        .query(&query_manual_detail.1, &[])
-        .await
-        .map_err(|e| {
-            eprintln!("Query error: {}", e);
-            poem::Error::from_status(StatusCode::INTERNAL_SERVER_ERROR)
-        })?;
-
+    let (rows, _) = get_query_manual_row(conn, query_manual_id).await?;
     let results = rows_to_json_string(&rows);
     Ok(Json(DataResponse { data: results }))
 }
@@ -1107,47 +897,8 @@ pub async fn query_manual_xml(
         )
     })?;
 
-    let query_manual_detail: (i16, String) = tbl_query_manual::table
-        .filter(tbl_query_manual::id.eq(query_manual_id))
-        .select((tbl_query_manual::ext_database_id, tbl_query_manual::query))
-        .first(conn)
-        .map_err(|_| common::error_message(StatusCode::NOT_FOUND, "Not Found"))?;
-
-    let credential_ext_database: (String, String, String) = tbl_ext_database
-        .filter(id.eq(query_manual_detail.0))
-        .filter(is_del.eq(0))
-        .select((username, password, db_connection))
-        .first(conn)
-        .map_err(|_| common::error_message(StatusCode::NOT_FOUND, "information.notFound"))?;
-
-    let ext_database_connection = format!(
-        "postgres://{}:{}@{}",
-        credential_ext_database.0, credential_ext_database.1, credential_ext_database.2
-    );
-
-    let (client, connection) = tokio_postgres::connect(&ext_database_connection, NoTls)
-        .await
-        .map_err(|e| {
-            eprintln!("Database connection error: {}", e);
-            poem::Error::from_status(StatusCode::INTERNAL_SERVER_ERROR)
-        })?;
-
-    // Jalankan koneksi di background
-    tokio::spawn(async move {
-        if let Err(e) = connection.await {
-            eprintln!("Connection error: {}", e);
-        }
-    });
-
-    let rows = client
-        .query(&query_manual_detail.1, &[])
-        .await
-        .map_err(|e| {
-            eprintln!("Query error: {}", e);
-            poem::Error::from_status(StatusCode::INTERNAL_SERVER_ERROR)
-        })?;
-
-    match extract_query_parts(&query_manual_detail.1) {
+    let (rows, query_str) = get_query_manual_row(conn, query_manual_id).await?;
+    match extract_query_parts(&query_str) {
         Some((name, _)) => {
             let results = rows_to_xml_string(&name, &rows);
             Ok(Json(DataResponse { data: results }))
@@ -1172,33 +923,8 @@ pub async fn query_exact_object_run(
         )
     })?;
 
-    let credential_ext_database: (String, String, String) = tbl_ext_database
-        .filter(id.eq(ext_database_id))
-        .filter(is_del.eq(0))
-        .select((username, password, db_connection))
-        .first(conn)
-        .map_err(|_| common::error_message(StatusCode::NOT_FOUND, "information.notFound"))?;
-
-    let ext_database_connection = format!(
-        "postgres://{}:{}@{}",
-        credential_ext_database.0, credential_ext_database.1, credential_ext_database.2
-    );
-
-    let (client, connection) = tokio_postgres::connect(&ext_database_connection, NoTls)
-        .await
-        .map_err(|e| {
-            eprintln!("Database connection error: {}", e);
-            poem::Error::from_status(StatusCode::INTERNAL_SERVER_ERROR)
-        })?;
-
-    tokio::spawn(async move {
-        if let Err(e) = connection.await {
-            eprintln!("Connection error: {}", e);
-        }
-    });
-
+    let client = get_external_pg_client(conn, ext_database_id).await?;
     let query = format!("SELECT * FROM {0} LIMIT 1", entity_name);
-
     let rows = client.query(&query, &[]).await.map_err(|e| {
         eprintln!("Query error: {}", e);
         poem::Error::from_status(StatusCode::INTERNAL_SERVER_ERROR)
@@ -1217,8 +943,7 @@ pub async fn query_exact_object_list(
     Path((ext_database_id, entity_name)): Path<(i16, String)>,
     Query(pagination): Query<Pagination>,
 ) -> poem::Result<impl IntoResponse> {
-    let start = pagination.start.unwrap_or(0);
-    let length = pagination.length.unwrap_or(10).min(100);
+    let (start, length) = parse_pagination(&pagination);
 
     let conn = &mut pool.get().map_err(|_| {
         common::error_message(
@@ -1227,71 +952,10 @@ pub async fn query_exact_object_list(
         )
     })?;
 
-    let credential_ext_database: (String, String, String) = tbl_ext_database
-        .filter(id.eq(ext_database_id))
-        .filter(is_del.eq(0))
-        .select((username, password, db_connection))
-        .first(conn)
-        .map_err(|_| common::error_message(StatusCode::NOT_FOUND, "information.notFound"))?;
-
-    let ext_database_connection = format!(
-        "postgres://{}:{}@{}",
-        credential_ext_database.0, credential_ext_database.1, credential_ext_database.2
-    );
-
-    let (client, connection) = tokio_postgres::connect(&ext_database_connection, NoTls)
-        .await
-        .map_err(|e| {
-            eprintln!("Database connection error: {}", e);
-            poem::Error::from_status(StatusCode::INTERNAL_SERVER_ERROR)
-        })?;
-
-    tokio::spawn(async move {
-        if let Err(e) = connection.await {
-            eprintln!("Connection error: {}", e);
-        }
-    });
-
-    let query = format!("SELECT * FROM {0}", entity_name);
-    if let Some(count_query) = convert_to_count_query(&query) {
-        let row = match client.query_one(&count_query, &[]).await {
-            Ok(row) => row,
-            Err(_) => {
-                return Err(common::error_message(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "information.notFound",
-                ));
-            }
-        };
-
-        let total: i64 = row.get(0);
-        if total > 0 {
-            let paginated_query = format!(
-                "{0} OFFSET {1} ROWS FETCH NEXT {2} ROWS ONLY",
-                &query, start, length
-            );
-            let rows = client.query(&paginated_query, &[]).await.map_err(|e| {
-                eprintln!("Query error: {}", e);
-                poem::Error::from_status(StatusCode::INTERNAL_SERVER_ERROR)
-            })?;
-
-            let results = rows_to_json(&rows);
-            Ok(Json(PaginatedResponse {
-                total: total as i64,
-                data: results,
-            }))
-        } else {
-            Ok(Json(PaginatedResponse {
-                total: 0,
-                data: vec![],
-            }))
-        }
-    } else {
-        Ok(Json(PaginatedResponse {
-            total: 0,
-            data: vec![],
-        }))
-    }
+    let client = get_external_pg_client(conn, ext_database_id).await?;
+    let query = format!("SELECT * FROM {}", entity_name);
+    let response = query_with_pagination(&client, &query, start, length).await?;
+    Ok(Json(response))
 }
 
 #[handler]
@@ -1307,7 +971,7 @@ pub async fn query_exact_whitelist_run(
         )
     })?;
 
-    let ext_database_query: (i16, String) = tbl_ext_database_query::table
+    let (ext_database_id, query_string): (i16, String) = tbl_ext_database_query::table
         .filter(tbl_ext_database_query::id.eq(ext_database_query_id))
         .filter(tbl_ext_database_query::is_del.eq(0))
         .select((
@@ -1317,39 +981,11 @@ pub async fn query_exact_whitelist_run(
         .first(conn)
         .map_err(|_| common::error_message(StatusCode::NOT_FOUND, "information.notFound"))?;
 
-    let credential_ext_database: (String, String, String) = tbl_ext_database
-        .filter(id.eq(ext_database_query.0))
-        .filter(is_del.eq(0))
-        .select((username, password, db_connection))
-        .first(conn)
-        .map_err(|_| common::error_message(StatusCode::NOT_FOUND, "information.notFound"))?;
-
-    let ext_database_connection = format!(
-        "postgres://{}:{}@{}",
-        credential_ext_database.0, credential_ext_database.1, credential_ext_database.2
-    );
-
-    let (client, connection) = tokio_postgres::connect(&ext_database_connection, NoTls)
-        .await
-        .map_err(|e| {
-            eprintln!("Database connection error: {}", e);
-            poem::Error::from_status(StatusCode::INTERNAL_SERVER_ERROR)
-        })?;
-
-    // Jalankan koneksi di background
-    tokio::spawn(async move {
-        if let Err(e) = connection.await {
-            eprintln!("Connection error: {}", e);
-        }
-    });
-
-    let rows = client
-        .query(&ext_database_query.1, &[])
-        .await
-        .map_err(|e| {
-            eprintln!("Query error: {}", e);
-            poem::Error::from_status(StatusCode::INTERNAL_SERVER_ERROR)
-        })?;
+    let client = get_external_pg_client(conn, ext_database_id).await?;
+    let rows = client.query(&query_string, &[]).await.map_err(|e| {
+        eprintln!("Query error: {}", e);
+        poem::Error::from_status(StatusCode::INTERNAL_SERVER_ERROR)
+    })?;
 
     let columns_info = extract_columns_info(&rows);
     Ok(Json(DataResponse {
@@ -1365,8 +1001,7 @@ pub async fn query_exact_whitelist_list(
     Query(pagination): Query<Pagination>,
 ) -> poem::Result<impl IntoResponse> {
     validate_id(ext_database_query_id)?;
-    let start = pagination.start.unwrap_or(0);
-    let length = pagination.length.unwrap_or(10).min(100);
+    let (start, length) = parse_pagination(&pagination);
 
     let conn = &mut pool.get().map_err(|_| {
         common::error_message(
@@ -1375,7 +1010,7 @@ pub async fn query_exact_whitelist_list(
         )
     })?;
 
-    let ext_database_query: (i16, String) = tbl_ext_database_query::table
+    let (ext_database_id, query_string): (i16, String) = tbl_ext_database_query::table
         .filter(tbl_ext_database_query::id.eq(ext_database_query_id))
         .filter(tbl_ext_database_query::is_del.eq(0))
         .select((
@@ -1385,69 +1020,7 @@ pub async fn query_exact_whitelist_list(
         .first(conn)
         .map_err(|_| common::error_message(StatusCode::NOT_FOUND, "information.notFound"))?;
 
-    let credential_ext_database: (String, String, String) = tbl_ext_database
-        .filter(id.eq(ext_database_query.0))
-        .filter(is_del.eq(0))
-        .select((username, password, db_connection))
-        .first(conn)
-        .map_err(|_| common::error_message(StatusCode::NOT_FOUND, "information.notFound"))?;
-
-    let ext_database_connection = format!(
-        "postgres://{}:{}@{}",
-        credential_ext_database.0, credential_ext_database.1, credential_ext_database.2
-    );
-
-    let (client, connection) = tokio_postgres::connect(&ext_database_connection, NoTls)
-        .await
-        .map_err(|e| {
-            eprintln!("Database connection error: {}", e);
-            poem::Error::from_status(StatusCode::INTERNAL_SERVER_ERROR)
-        })?;
-
-    tokio::spawn(async move {
-        if let Err(e) = connection.await {
-            eprintln!("Connection error: {}", e);
-        }
-    });
-
-    if let Some(count_query) = convert_to_count_query(&ext_database_query.1) {
-        let row = match client.query_one(&count_query, &[]).await {
-            Ok(row) => row,
-            Err(_) => {
-                return Err(common::error_message(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "information.notFound",
-                ));
-            }
-        };
-
-        let total: i64 = row.get(0);
-        if total > 0 {
-            let paginated_query = format!(
-                "{0} OFFSET {1} ROWS FETCH NEXT {2} ROWS ONLY",
-                &ext_database_query.1, start, length
-            );
-
-            let rows = client.query(&paginated_query, &[]).await.map_err(|e| {
-                eprintln!("Query error: {}", e);
-                poem::Error::from_status(StatusCode::INTERNAL_SERVER_ERROR)
-            })?;
-
-            let results = rows_to_json(&rows);
-            Ok(Json(PaginatedResponse {
-                total: total as i64,
-                data: results,
-            }))
-        } else {
-            Ok(Json(PaginatedResponse {
-                total: 0,
-                data: vec![],
-            }))
-        }
-    } else {
-        Ok(Json(PaginatedResponse {
-            total: 0,
-            data: vec![],
-        }))
-    }
+    let client = get_external_pg_client(conn, ext_database_id).await?;
+    let response = query_with_pagination(&client, &query_string, start, length).await?;
+    Ok(Json(response))
 }
