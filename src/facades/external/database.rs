@@ -2,8 +2,8 @@ use crate::models::common::{DataResponse, PaginatedResponse};
 use crate::models::external::database::{
     EntryExternalDatabase, EntryQueryManual, ExternalDatabase, ExternalDatabaseQuery, QueryManual,
 };
-use crate::schema::tbl_ext_database::dsl::*;
-use crate::schema::{tbl_ext_database_query, tbl_query_manual};
+use crate::schema::tbl_ext_database;
+use crate::schema::{tbl_ext_database_query, tbl_mt_database_type, tbl_query_manual};
 use crate::utils::common::{
     self, convert_to_count_query, extract_columns_info, extract_query_parts, is_only_comment,
     is_sql_type, rows_to_csv_string, rows_to_insert_query_string, rows_to_json,
@@ -33,17 +33,38 @@ fn parse_pagination(pagination: &Pagination) -> (i64, i64) {
 fn get_ext_database_info(
     conn: &mut PgConnection,
     ext_database_id: i16,
-) -> poem::Result<(String, String, String)> {
-    tbl_ext_database
-        .filter(id.eq(ext_database_id))
-        .filter(is_del.eq(0))
-        .select((username, password, db_connection))
-        .first::<(String, String, String)>(conn)
-        .map_err(|_| common::error_message(StatusCode::NOT_FOUND, "information.notFound"))
+) -> poem::Result<(String, String, String, String, String)> {
+    let (username, password, db_connection, mt_database_type_id): (String, String, String, i16) =
+        tbl_ext_database::table
+            .filter(tbl_ext_database::id.eq(ext_database_id))
+            .filter(tbl_ext_database::is_del.eq(0))
+            .select((
+                tbl_ext_database::username,
+                tbl_ext_database::password,
+                tbl_ext_database::db_connection,
+                tbl_ext_database::mt_database_type_id,
+            ))
+            .first::<(String, String, String, i16)>(conn)
+            .map_err(|_| common::error_message(StatusCode::NOT_FOUND, "information.notFound"))?;
+
+    let (url, pagination): (String, String) = tbl_mt_database_type::table
+        .filter(tbl_mt_database_type::id.eq(mt_database_type_id))
+        .select((tbl_mt_database_type::url, tbl_mt_database_type::pagination))
+        .first::<(String, String)>(conn)
+        .map_err(|_| common::error_message(StatusCode::NOT_FOUND, "information.notFound"))?;
+    Ok((username, password, db_connection, url, pagination))
 }
 
-fn build_connection_string(usr: &str, pass: &str, db_conn: &str) -> String {
-    format!("postgres://{}:{}@{}", usr, pass, db_conn)
+fn build_connection_string(
+    username: &str,
+    password: &str,
+    db_connection: &str,
+    url: &str,
+) -> String {
+    // format!("postgres://{0}:{1}@{2}", usr, password, db_connection)
+    url.replace("{0}", username)
+        .replace("{1}", password)
+        .replace("{2}", db_connection)
 }
 
 async fn connect_to_external_database(connection_str: &str) -> poem::Result<Client> {
@@ -74,7 +95,7 @@ async fn get_query_manual_client(
         .first(conn)
         .map_err(|_| common::error_message(StatusCode::NOT_FOUND, "information.notFound"))?;
 
-    let client = get_external_pg_client(conn, ext_database_id).await?;
+    let (client, _) = get_external_pg_client(conn, ext_database_id).await?;
     Ok((client, query_str))
 }
 
@@ -93,14 +114,16 @@ async fn get_query_manual_row(
 async fn get_external_pg_client(
     conn: &mut PgConnection,
     ext_database_id: i16,
-) -> poem::Result<Client> {
-    let (usr, pass, db_conn) = get_ext_database_info(conn, ext_database_id)?;
-    let connection_str = build_connection_string(&usr, &pass, &db_conn);
-    connect_to_external_database(&connection_str).await
+) -> poem::Result<(Client, String)> {
+    let (usr, pass, db_conn, url, pagination) = get_ext_database_info(conn, ext_database_id)?;
+    let connection_str = build_connection_string(&usr, &pass, &db_conn, &url);
+    let client = connect_to_external_database(&connection_str).await?;
+    Ok((client, pagination))
 }
 
 async fn query_with_pagination(
     client: &Client,
+    pagination: &str,
     base_query: &str,
     start: i64,
     length: i64,
@@ -115,10 +138,10 @@ async fn query_with_pagination(
             })?;
 
         let data = if total > 0 {
-            let paginated_query = format!(
-                "{} OFFSET {} ROWS FETCH NEXT {} ROWS ONLY",
-                base_query, start, length
-            );
+            let paginated_query = pagination
+                .replace("{0}", base_query)
+                .replace("{1}", &start.to_string())
+                .replace("{2}", &length.to_string());
 
             let rows = client.query(&paginated_query, &[]).await.map_err(|e| {
                 eprintln!("Query error: {}", e);
@@ -147,9 +170,9 @@ pub fn list(
 ) -> poem::Result<impl IntoResponse> {
     let (start, length) = parse_pagination(&pagination);
 
-    let mut query = tbl_ext_database.into_boxed();
+    let mut query = tbl_ext_database::table.into_boxed();
     if let Some(ref term) = pagination.search {
-        query = query.filter(cd.ilike(format!("%{}%", term)));
+        query = query.filter(tbl_ext_database::cd.ilike(format!("%{}%", term)));
     }
 
     let conn = &mut pool.get().map_err(|_| {
@@ -171,16 +194,18 @@ pub fn list(
     };
 
     if total > 0 {
-        let mut query = tbl_ext_database.into_boxed();
+        let mut query = tbl_ext_database::table.into_boxed();
         if let Some(ref term) = pagination.search {
-            query = query.filter(cd.ilike(format!("%{}%", term)));
+            query = query.filter(tbl_ext_database::cd.ilike(format!("%{}%", term)));
         }
 
         match (pagination.sort.as_deref(), pagination.dir.as_deref()) {
-            (Some("code"), Some("desc")) => query = query.order(cd.desc()),
-            (Some("code"), _) => query = query.order(cd.asc()),
-            (Some("createdDate"), Some("desc")) => query = query.order(dt_created.desc()),
-            (Some("createdDate"), _) => query = query.order(dt_created.asc()),
+            (Some("code"), Some("desc")) => query = query.order(tbl_ext_database::cd.desc()),
+            (Some("code"), _) => query = query.order(tbl_ext_database::cd.asc()),
+            (Some("createdDate"), Some("desc")) => {
+                query = query.order(tbl_ext_database::dt_created.desc())
+            }
+            (Some("createdDate"), _) => query = query.order(tbl_ext_database::dt_created.asc()),
             _ => {}
         }
 
@@ -217,8 +242,8 @@ pub fn get(
         )
     })?;
 
-    let ext_database = tbl_ext_database
-        .filter(id.eq(ext_database_id))
+    let ext_database = tbl_ext_database::table
+        .filter(tbl_ext_database::id.eq(ext_database_id))
         .first::<ExternalDatabase>(conn)
         .map_err(|_| common::error_message(StatusCode::NOT_FOUND, "information.notFound"))?;
 
@@ -242,8 +267,8 @@ pub fn add(
         )
     })?;
 
-    let max_id: Option<i16> = tbl_ext_database
-        .select(diesel::dsl::max(id))
+    let max_id: Option<i16> = tbl_ext_database::table
+        .select(diesel::dsl::max(tbl_ext_database::id))
         .first(conn)
         .map_err(|e| {
             eprintln!("Loading error: {}", e);
@@ -275,7 +300,7 @@ pub fn add(
             version: 0,
         };
 
-        let inserted = diesel::insert_into(tbl_ext_database)
+        let inserted = diesel::insert_into(tbl_ext_database::table)
             .values(&ext_database)
             .get_result::<ExternalDatabase>(conn)
             .map_err(|e| {
@@ -317,14 +342,14 @@ pub fn update(
     entry_ext_database.version = entry_ext_database.version + 1;
 
     let updated = diesel::update(
-        tbl_ext_database
-            .filter(id.eq(ext_database_id))
-            .filter(version.eq(&entry_ext_database.version - 1)),
+        tbl_ext_database::table
+            .filter(tbl_ext_database::id.eq(ext_database_id))
+            .filter(tbl_ext_database::version.eq(&entry_ext_database.version - 1)),
     )
     .set((
         &entry_ext_database,
-        updated_by.eq(Some(jwt_auth.claims.username.clone())),
-        dt_updated.eq(Some(Utc::now().naive_utc())),
+        tbl_ext_database::updated_by.eq(Some(jwt_auth.claims.username.clone())),
+        tbl_ext_database::dt_updated.eq(Some(Utc::now().naive_utc())),
     ))
     .get_result::<ExternalDatabase>(conn)
     .map_err(|e| {
@@ -351,11 +376,11 @@ pub fn delete(
         )
     })?;
 
-    diesel::update(tbl_ext_database.filter(id.eq(ext_database_id)))
+    diesel::update(tbl_ext_database::table.filter(tbl_ext_database::id.eq(ext_database_id)))
         .set((
-            is_del.eq(1),
-            updated_by.eq(Some(jwt_auth.claims.username.clone())),
-            dt_updated.eq(Some(Utc::now().naive_utc())),
+            tbl_ext_database::is_del.eq(1),
+            tbl_ext_database::updated_by.eq(Some(jwt_auth.claims.username.clone())),
+            tbl_ext_database::dt_updated.eq(Some(Utc::now().naive_utc())),
         ))
         .get_result::<ExternalDatabase>(conn)
         .map_err(|e| {
@@ -402,7 +427,7 @@ pub async fn query_object_list(
         )
     })?;
 
-    let client = get_external_pg_client(conn, ext_database_id).await?;
+    let (client, pagination) = get_external_pg_client(conn, ext_database_id).await?;
 
     let query = r#"
         SELECT
@@ -444,7 +469,7 @@ pub async fn query_object_list(
         --ORDER BY {2}
     "#;
 
-    let response = query_with_pagination(&client, query, start, length).await?;
+    let response = query_with_pagination(&client, &pagination, query, start, length).await?;
     Ok(Json(response))
 }
 
@@ -534,7 +559,7 @@ pub async fn query_manual_run(
         )
     })?;
 
-    let client = get_external_pg_client(conn, ext_database_id).await?;
+    let (client, pagination) = get_external_pg_client(conn, ext_database_id).await?;
 
     let mut success_response: Option<Value> = None;
     let mut results: Vec<Value> = Vec::new();
@@ -551,7 +576,10 @@ pub async fn query_manual_run(
         match extract_query_parts(&part) {
             Some((name, action)) => {
                 if is_sql_type(&part, "(SELECT|WITH)") && results.len() == 0 {
-                    let query = format!("{0} LIMIT 1", &part);
+                    let query = pagination
+                        .replace("{0}", &part)
+                        .replace("{1}", "0")
+                        .replace("{2}", "1");
                     match client.query(&query, &[]).await {
                         Ok(rows) => {
                             let columns_info = extract_columns_info(&rows);
@@ -948,8 +976,11 @@ pub async fn query_exact_object_run(
         )
     })?;
 
-    let client = get_external_pg_client(conn, ext_database_id).await?;
-    let query = format!("SELECT * FROM {0} LIMIT 1", entity_name);
+    let (client, pagination) = get_external_pg_client(conn, ext_database_id).await?;
+    let query = pagination
+        .replace("{0}", &format!("SELECT * FROM {0}", entity_name))
+        .replace("{1}", "0")
+        .replace("{2}", "1");
     let rows = client.query(&query, &[]).await.map_err(|e| {
         eprintln!("Query error: {}", e);
         poem::Error::from_status(StatusCode::INTERNAL_SERVER_ERROR)
@@ -977,9 +1008,9 @@ pub async fn query_exact_object_list(
         )
     })?;
 
-    let client = get_external_pg_client(conn, ext_database_id).await?;
+    let (client, pagination) = get_external_pg_client(conn, ext_database_id).await?;
     let query = format!("SELECT * FROM {}", entity_name);
-    let response = query_with_pagination(&client, &query, start, length).await?;
+    let response = query_with_pagination(&client, &pagination, &query, start, length).await?;
     Ok(Json(response))
 }
 
@@ -1006,8 +1037,12 @@ pub async fn query_exact_whitelist_run(
         .first(conn)
         .map_err(|_| common::error_message(StatusCode::NOT_FOUND, "information.notFound"))?;
 
-    let client = get_external_pg_client(conn, ext_database_id).await?;
-    let rows = client.query(&query_string, &[]).await.map_err(|e| {
+    let (client, pagination) = get_external_pg_client(conn, ext_database_id).await?;
+    let query = pagination
+        .replace("{0}", &query_string)
+        .replace("{1}", "0")
+        .replace("{2}", "1");
+    let rows = client.query(&query, &[]).await.map_err(|e| {
         eprintln!("Query error: {}", e);
         poem::Error::from_status(StatusCode::INTERNAL_SERVER_ERROR)
     })?;
@@ -1045,7 +1080,8 @@ pub async fn query_exact_whitelist_list(
         .first(conn)
         .map_err(|_| common::error_message(StatusCode::NOT_FOUND, "information.notFound"))?;
 
-    let client = get_external_pg_client(conn, ext_database_id).await?;
-    let response = query_with_pagination(&client, &query_string, start, length).await?;
+    let (client, pagination) = get_external_pg_client(conn, ext_database_id).await?;
+    let response =
+        query_with_pagination(&client, &pagination, &query_string, start, length).await?;
     Ok(Json(response))
 }
