@@ -78,14 +78,32 @@ table! {
 }
 
 table! {
+    tbl_mt_database_type (id) {
+        id -> SmallInt,
+        nm -> Varchar,
+        driver -> Varchar,
+        url -> Varchar,
+        pagination -> Varchar,
+        is_del -> SmallInt,
+        created_by -> Varchar,
+        dt_created -> Timestamp,
+        updated_by -> Nullable<Varchar>,
+        dt_updated -> Nullable<Timestamp>,
+        version -> SmallInt,
+    }
+}
+
+table! {
     tbl_ext_database (id) {
         id -> SmallInt,
         cd -> Varchar,
         dscp -> Nullable<Varchar>,
+        ext_server_id -> SmallInt,
         mt_database_type_id -> SmallInt,
         username -> Varchar,
         password -> Varchar,
         db_connection -> Varchar,
+        is_use_page -> SmallInt,
         is_lock -> SmallInt,
         is_del -> SmallInt,
         created_by -> Varchar,

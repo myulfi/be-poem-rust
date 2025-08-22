@@ -260,10 +260,12 @@ pub fn add(
             id: next_id,
             cd: entry_ext_database.cd,
             dscp: entry_ext_database.dscp,
+            ext_server_id: entry_ext_database.ext_server_id,
             mt_database_type_id: entry_ext_database.mt_database_type_id,
             username: entry_ext_database.username,
             password: entry_ext_database.password,
             db_connection: entry_ext_database.db_connection,
+            is_use_page: entry_ext_database.is_use_page,
             is_lock: entry_ext_database.is_lock,
             is_del: 0,
             created_by: jwt_auth.claims.username,
@@ -836,7 +838,7 @@ pub async fn query_manual_sql_update(
 #[handler]
 pub async fn query_manual_xlsx(
     pool: poem::web::Data<&DbPool>,
-    // _: crate::auth::middleware::JwtAuth,
+    _: crate::auth::middleware::JwtAuth,
     Path((query_manual_id, first_amount_combined)): Path<(i64, i16)>,
 ) -> poem::Result<impl IntoResponse> {
     validate_id(query_manual_id)?;

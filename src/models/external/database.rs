@@ -12,12 +12,16 @@ pub struct ExternalDatabase {
     pub cd: String,
     #[serde(rename = "description")]
     pub dscp: Option<String>,
+    #[serde(rename = "externalServerId")]
+    pub ext_server_id: i16,
     #[serde(rename = "databaseTypeId")]
     pub mt_database_type_id: i16,
     pub username: String,
     pub password: String,
     #[serde(rename = "databaseConnection")]
     pub db_connection: String,
+    #[serde(rename = "usePageFlag")]
+    pub is_use_page: i16,
     #[serde(rename = "lockFlag")]
     pub is_lock: i16,
     #[serde(rename = "deletedFlag")]
@@ -45,6 +49,8 @@ pub struct EntryExternalDatabase {
     pub cd: String,
     #[serde(rename = "description")]
     pub dscp: Option<String>,
+    #[serde(rename = "externalServerId")]
+    pub ext_server_id: i16,
     #[serde(rename = "databaseTypeId")]
     #[validate(range(min = 1, max = 8, message = "Type must be min 1"))]
     pub mt_database_type_id: i16,
@@ -55,6 +61,8 @@ pub struct EntryExternalDatabase {
     #[serde(rename = "databaseConnection")]
     #[validate(length(min = 1, message = "Database connection must be filled"))]
     pub db_connection: String,
+    #[serde(rename = "usePageFlag")]
+    pub is_use_page: i16,
     #[serde(rename = "lockFlag")]
     pub is_lock: i16,
     #[serde(default)]
