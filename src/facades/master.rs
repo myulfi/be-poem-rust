@@ -1,9 +1,8 @@
+use crate::db::DbPool;
 use crate::models::common::DataResponse;
-use crate::models::master::database_type::DatabaseType;
 use crate::schema::{tbl_ext_server, tbl_mt_database_type};
 use crate::utils::common;
-use crate::{db::DbPool, models::external::server::ExternalServer};
-use diesel::ExpressionMethods;
+use diesel::prelude::*;
 use poem::IntoResponse;
 use poem::{handler, http::StatusCode, web::Json};
 
@@ -21,11 +20,15 @@ pub fn database_type(
 
     let mt_database_type = tbl_mt_database_type::table
         .filter(tbl_mt_database_type::is_del.eq(0))
-        .load::<DatabaseType>(conn)
+        .select((tbl_mt_database_type::id, tbl_mt_database_type::nm))
+        .load::<(i16, String)>(conn)
         .map_err(|_| common::error_message(StatusCode::NOT_FOUND, "information.notFound"))?;
 
     Ok(Json(DataResponse {
-        data: mt_database_type,
+        data: mt_database_type
+            .into_iter()
+            .map(|(key, value)| serde_json::json!({ "key": key, "value": value }))
+            .collect::<Vec<serde_json::Value>>(),
     }))
 }
 
@@ -43,8 +46,14 @@ pub fn external_server(
 
     let ext_server = tbl_ext_server::table
         .filter(tbl_ext_server::is_del.eq(0))
-        .load::<ExternalServer>(conn)
+        .select((tbl_ext_server::id, tbl_ext_server::cd))
+        .load::<(i16, String)>(conn)
         .map_err(|_| common::error_message(StatusCode::NOT_FOUND, "information.notFound"))?;
 
-    Ok(Json(DataResponse { data: ext_server }))
+    Ok(Json(DataResponse {
+        data: ext_server
+            .into_iter()
+            .map(|(key, value)| serde_json::json!({ "key": key, "value": value }))
+            .collect::<Vec<serde_json::Value>>(),
+    }))
 }

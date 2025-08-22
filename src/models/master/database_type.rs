@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 #[serde(rename_all = "camelCase")]
 #[diesel(table_name = crate::schema::tbl_mt_database_type)]
 pub struct DatabaseType {
-    pub id: i64,
+    pub id: i16,
     #[serde(rename = "name")]
     pub nm: String,
     pub driver: String,
