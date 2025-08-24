@@ -1,5 +1,6 @@
 use crate::facades::external::api;
 use crate::facades::external::database;
+use crate::facades::external::database_query_pg;
 use crate::facades::external::server;
 
 use poem::{Route, get, post};
@@ -13,66 +14,66 @@ pub fn routes() -> Route {
                 .patch(database::update)
                 .delete(database::delete),
         )
-        .at("/:id/database-connect.json", get(database::connect))
+        .at("/:id/database-connect.json", get(database_query_pg::connect))
         .at(
             "/:id/database-query-object-list.json",
-            get(database::query_object_list),
+            get(database_query_pg::query_object_list),
         )
         .at(
             "/:id/database-query-whitelist-list.json",
-            get(database::query_whitelist_list),
+            get(database_query_pg::query_whitelist_list),
         )
         .at(
             "/:id/database-query-manual-run.json",
-            post(database::query_manual_run),
+            post(database_query_pg::query_manual_run),
         )
         .at(
             "/:id/database-query-manual-list.json",
-            get(database::query_manual_list),
+            get(database_query_pg::query_manual_list),
         )
         .at(
             "/:id/database-query-manual-all-list.json",
-            get(database::query_manual_all_list),
+            get(database_query_pg::query_manual_all_list),
         )
         .at(
             "/:id/:include_column_name_flag/:number_line_per_action/database-query-manual-sql-insert.json",
-            get(database::query_manual_sql_insert),
+            get(database_query_pg::query_manual_sql_insert),
         )
         .at(
             "/:id/:multiple_line_flag/:first_amount_conditioned/database-query-manual-sql-update.json",
-            get(database::query_manual_sql_update),
+            get(database_query_pg::query_manual_sql_update),
         )
         .at(
             "/:id/:first_amount_combined/database-query-manual.xlsx",
-            get(database::query_manual_xlsx),
+            get(database_query_pg::query_manual_xlsx),
         )
         .at(
             "/:id/:header_flag/:delimiter/database-query-manual-csv.json",
-            get(database::query_manual_csv),
+            get(database_query_pg::query_manual_csv),
         )
         .at(
             "/:id/database-query-manual.json",
-            get(database::query_manual_json),
+            get(database_query_pg::query_manual_json),
         )
         .at(
             "/:id/database-query-manual-xml.json",
-            get(database::query_manual_xml),
+            get(database_query_pg::query_manual_xml),
         )
         .at(
             "/:id/:name/database-query-exact-object-run.json",
-            post(database::query_exact_object_run),
+            post(database_query_pg::query_exact_object_run),
         )
         .at(
             "/:id/:name/database-query-exact-object-list.json",
-            get(database::query_exact_object_list),
+            get(database_query_pg::query_exact_object_list),
         )
         .at(
             "/:id/database-query-exact-whitelist-run.json",
-            post(database::query_exact_whitelist_run),
+            post(database_query_pg::query_exact_whitelist_run),
         )
         .at(
             "/:id/database-query-exact-whitelist-list.json",
-            get(database::query_exact_whitelist_list),
+            get(database_query_pg::query_exact_whitelist_list),
         )
         .at("/server.json", get(server::list).post(server::add))
         .at(

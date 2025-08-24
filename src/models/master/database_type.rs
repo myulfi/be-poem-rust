@@ -1,6 +1,6 @@
 use chrono::NaiveDateTime;
 use diesel::prelude::Queryable;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 
 #[derive(Queryable, Serialize)]
 #[serde(rename_all = "camelCase")]
