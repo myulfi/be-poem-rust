@@ -24,7 +24,7 @@ use tokio_postgres::{Client, NoTls, Row};
 fn get_ext_database_info(
     conn: &mut PgConnection,
     ext_database_id: i16,
-) -> poem::Result<(String, String, String, String, String)> {
+) -> poem::Result<(String, String)> {
     let (username, password, db_connection, mt_database_type_id): (String, String, String, i16) =
         tbl_ext_database::table
             .filter(tbl_ext_database::id.eq(ext_database_id))
@@ -43,19 +43,14 @@ fn get_ext_database_info(
         .select((tbl_mt_database_type::url, tbl_mt_database_type::pagination))
         .first::<(String, String)>(conn)
         .map_err(|_| common::error_message(StatusCode::NOT_FOUND, "information.notFound"))?;
-    Ok((username, password, db_connection, url, pagination))
-}
 
-fn build_connection_string(
-    username: &str,
-    password: &str,
-    db_connection: &str,
-    url: &str,
-) -> String {
-    // format!("postgres://{0}:{1}@{2}", usr, password, db_connection)
-    url.replace("{0}", username)
-        .replace("{1}", password)
-        .replace("{2}", db_connection)
+    // let url = format!("postgres://{0}:{1}@{2}", usr, password, db_connection)
+    let url = url
+        .replace("{0}", &username)
+        .replace("{1}", &password)
+        .replace("{2}", &db_connection);
+
+    Ok((url, pagination))
 }
 
 async fn connect_to_external_database(connection_str: &str) -> poem::Result<Client> {
@@ -106,9 +101,8 @@ async fn get_external_pg_client(
     conn: &mut PgConnection,
     ext_database_id: i16,
 ) -> poem::Result<(Client, String)> {
-    let (usr, pass, db_conn, url, pagination) = get_ext_database_info(conn, ext_database_id)?;
-    let connection_str = build_connection_string(&usr, &pass, &db_conn, &url);
-    let client = connect_to_external_database(&connection_str).await?;
+    let (url, pagination) = get_ext_database_info(conn, ext_database_id)?;
+    let client = connect_to_external_database(&url).await?;
     Ok((client, pagination))
 }
 
