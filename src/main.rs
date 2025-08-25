@@ -1,4 +1,5 @@
 mod auth;
+mod database_pool;
 mod db;
 mod facades;
 mod models;
