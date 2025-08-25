@@ -48,9 +48,9 @@ use diesel::prelude::*;
 use diesel::{ExpressionMethods, PgConnection};
 use poem::web::{Json, Query};
 use poem::{IntoResponse, handler, http::StatusCode, web::Path};
-use sqlx::Pool;
 use sqlx::mysql::MySqlPoolOptions;
 use sqlx::postgres::PgPoolOptions;
+use sqlx::{Column, Pool, Row};
 use sqlx::{MySql, Postgres};
 
 use crate::database_pool::DatabasePool;
@@ -150,10 +150,10 @@ async fn get_query_manual_pool(
 async fn get_query_manual_row(
     conn: &mut PgConnection,
     query_manual_id: i64,
-) -> poem::Result<(Vec<Value>, String)> {
+) -> poem::Result<(Vec<Value>, Vec<String>, String)> {
     let (ext_pool, query_str, _) = get_query_manual_pool(conn, query_manual_id).await?;
 
-    let results = match &ext_pool {
+    match &ext_pool {
         DatabasePool::Postgres(pg_pool) => {
             let rows = sqlx::query(&query_str)
                 .fetch_all(pg_pool)
@@ -163,7 +163,18 @@ async fn get_query_manual_row(
                     poem::Error::from_status(StatusCode::INTERNAL_SERVER_ERROR)
                 })?;
 
-            rows_to_json_postgres(&rows)
+            let headers = if let Some(row) = rows.first() {
+                row.columns()
+                    .iter()
+                    .map(|col| col.name().to_string())
+                    .collect()
+            } else {
+                Vec::new()
+            };
+
+            let results = rows_to_json_postgres(&rows);
+
+            Ok((results, headers, query_str))
         }
         DatabasePool::MySql(my_pool) => {
             let rows = sqlx::query(&query_str)
@@ -174,11 +185,20 @@ async fn get_query_manual_row(
                     poem::Error::from_status(StatusCode::INTERNAL_SERVER_ERROR)
                 })?;
 
-            rows_to_json_mysql(&rows)
-        }
-    };
+            let headers = if let Some(row) = rows.first() {
+                row.columns()
+                    .iter()
+                    .map(|col| col.name().to_string())
+                    .collect()
+            } else {
+                Vec::new()
+            };
 
-    Ok((results, query_str))
+            let results = rows_to_json_mysql(&rows);
+
+            Ok((results, headers, query_str))
+        }
+    }
 }
 
 async fn get_external_pool(
@@ -715,7 +735,6 @@ pub async fn query_manual_list(
     let (ext_database_id, query_string) = get_manual_query(conn, query_manual_id)?;
     let response =
         query_with_pagination(conn, ext_database_id, &query_string, start, length).await?;
-
     Ok(Json(response))
 }
 
@@ -734,7 +753,7 @@ pub async fn query_manual_all_list(
         )
     })?;
 
-    let (results, _) = get_query_manual_row(conn, query_manual_id).await?;
+    let (results, _, _) = get_query_manual_row(conn, query_manual_id).await?;
     Ok(Json(DataResponse { data: results }))
 }
 
@@ -757,7 +776,7 @@ pub async fn query_manual_sql_insert(
         )
     })?;
 
-    let (rows, query_str) = get_query_manual_row(conn, query_manual_id).await?;
+    let (rows, headers, query_str) = get_query_manual_row(conn, query_manual_id).await?;
     match extract_query_parts(&query_str) {
         Some((name, _)) => {
             let results = rows_to_insert_query_string(
@@ -765,6 +784,7 @@ pub async fn query_manual_sql_insert(
                 include_column_name_flag,
                 number_line_per_action,
                 rows,
+                headers,
             );
             Ok(Json(DataResponse { data: results }))
         }
@@ -790,7 +810,7 @@ pub async fn query_manual_sql_update(
         )
     })?;
 
-    let (rows, query_str) = get_query_manual_row(conn, query_manual_id).await?;
+    let (rows, headers, query_str) = get_query_manual_row(conn, query_manual_id).await?;
     match extract_query_parts(&query_str) {
         Some((name, _)) => {
             let results = rows_to_update_query_string(
@@ -798,6 +818,7 @@ pub async fn query_manual_sql_update(
                 multiple_line_flag,
                 first_amount_conditioned,
                 rows,
+                headers,
             );
             Ok(Json(DataResponse { data: results }))
         }
@@ -823,8 +844,8 @@ pub async fn query_manual_xlsx(
         )
     })?;
 
-    let (rows, _) = get_query_manual_row(conn, query_manual_id).await?;
-    let results = rows_to_xlsx_bytes(first_amount_combined, rows)?;
+    let (rows, headers, _) = get_query_manual_row(conn, query_manual_id).await?;
+    let results = rows_to_xlsx_bytes(first_amount_combined, rows, headers)?;
 
     Ok(poem::Response::builder()
         .status(StatusCode::OK)
@@ -854,8 +875,8 @@ pub async fn query_manual_csv(
         )
     })?;
 
-    let (rows, _) = get_query_manual_row(conn, query_manual_id).await?;
-    let results = rows_to_csv_string(header_flag, &delimiter, rows);
+    let (rows, headers, _) = get_query_manual_row(conn, query_manual_id).await?;
+    let results = rows_to_csv_string(header_flag, &delimiter, rows, headers);
     Ok(Json(DataResponse { data: results }))
 }
 
@@ -874,8 +895,8 @@ pub async fn query_manual_json(
         )
     })?;
 
-    let (rows, _) = get_query_manual_row(conn, query_manual_id).await?;
-    let results = rows_to_json_string(rows);
+    let (rows, headers, _) = get_query_manual_row(conn, query_manual_id).await?;
+    let results = rows_to_json_string(rows, headers);
     Ok(Json(DataResponse { data: results }))
 }
 
@@ -894,10 +915,10 @@ pub async fn query_manual_xml(
         )
     })?;
 
-    let (rows, query_str) = get_query_manual_row(conn, query_manual_id).await?;
+    let (rows, headers, query_str) = get_query_manual_row(conn, query_manual_id).await?;
     match extract_query_parts(&query_str) {
         Some((name, _)) => {
-            let results = rows_to_xml_string(&name, rows);
+            let results = rows_to_xml_string(&name, rows, headers);
             Ok(Json(DataResponse { data: results }))
         }
         None => Err(common::error_message(

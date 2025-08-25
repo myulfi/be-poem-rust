@@ -382,9 +382,11 @@ pub fn rows_to_insert_query_string(
     include_column_name_flag: i16,
     number_line_per_action: i16,
     rows: Vec<Value>,
+    headers: Vec<String>,
 ) -> String {
     let mut result = String::new();
     let mut batch = Vec::new();
+    let batch_size = number_line_per_action.max(1) as usize;
 
     for (row_index, row_value) in rows.iter().enumerate() {
         let obj = match row_value.as_object() {
@@ -392,11 +394,10 @@ pub fn rows_to_insert_query_string(
             None => continue, // skip non-object rows
         };
 
-        let mut columns = Vec::new();
         let mut values = Vec::new();
 
-        for (name, value) in obj {
-            columns.push(name.to_string());
+        for header in &headers {
+            let value = obj.get(header).unwrap_or(&Value::Null);
 
             let value_str = match value {
                 Value::Null => "NULL".to_string(),
@@ -412,15 +413,13 @@ pub fn rows_to_insert_query_string(
         batch.push(values.join(", "));
 
         let is_last = row_index == rows.len() - 1;
-        let batch_size = number_line_per_action.max(1) as usize;
-
         if batch.len() == batch_size || is_last {
             if include_column_name_flag == 1 {
                 let _ = write!(
                     &mut result,
-                    "INSERT INTO {} ({}) VALUES ({});\n",
+                    "INSERT INTO {} ({}) VALUES {};\n",
                     table_name,
-                    columns.join(", "),
+                    headers.join(", "),
                     batch
                         .iter()
                         .map(|v| format!("({})", v))
@@ -430,7 +429,7 @@ pub fn rows_to_insert_query_string(
             } else {
                 let _ = write!(
                     &mut result,
-                    "INSERT INTO {} VALUES ({});\n",
+                    "INSERT INTO {} VALUES {};\n",
                     table_name,
                     batch
                         .iter()
@@ -452,6 +451,7 @@ pub fn rows_to_update_query_string(
     multiple_line_flag: i16,
     first_amount_conditioned: i16,
     rows: Vec<Value>,
+    headers: Vec<String>,
 ) -> String {
     let mut result = String::new();
 
@@ -463,11 +463,9 @@ pub fn rows_to_update_query_string(
 
         let mut set_clauses = Vec::new();
         let mut where_clauses = Vec::new();
-        let mut column_names: Vec<&String> = obj.keys().collect();
-        column_names.sort(); // optional: sort biar konsisten
 
-        for (i, name) in column_names.iter().enumerate() {
-            let value = match obj.get(*name).unwrap_or(&Value::Null) {
+        for (i, name) in headers.iter().enumerate() {
+            let value = match obj.get(name).unwrap_or(&Value::Null) {
                 Value::Null => "NULL".to_string(),
                 Value::Bool(b) => b.to_string(),
                 Value::Number(n) => n.to_string(),
@@ -495,7 +493,7 @@ pub fn rows_to_update_query_string(
                         .enumerate()
                         .map(|(i, v)| {
                             if i == 0 {
-                                format!("{}", v)
+                                v.to_string()
                             } else {
                                 format!(", {}", v)
                             }
@@ -530,7 +528,11 @@ pub fn rows_to_update_query_string(
     result
 }
 
-pub fn rows_to_xlsx_bytes(first_amount_combined: i16, rows: Vec<Value>) -> poem::Result<Vec<u8>> {
+pub fn rows_to_xlsx_bytes(
+    first_amount_combined: i16,
+    rows: Vec<Value>,
+    headers: Vec<String>,
+) -> poem::Result<Vec<u8>> {
     if rows.is_empty() {
         return Ok(vec![]);
     }
@@ -539,17 +541,9 @@ pub fn rows_to_xlsx_bytes(first_amount_combined: i16, rows: Vec<Value>) -> poem:
     let sheet_name = "Sheet1";
     let _ = book.new_sheet(sheet_name);
 
-    // Ambil kolom dari keys object pertama
-    let first_obj = rows[0].as_object().ok_or_else(|| {
-        common::error_message(StatusCode::INTERNAL_SERVER_ERROR, "xlsx.invalidDataFormat")
-    })?;
-
-    let mut column_names: Vec<String> = first_obj.keys().cloned().collect();
-    column_names.sort(); // urutkan agar kolom konsisten
-
     let mut row_idx = 1;
 
-    // Style header
+    // Header style
     let mut header_style = Style::default();
     let mut font = Font::default();
     font.set_bold(true);
@@ -577,8 +571,8 @@ pub fn rows_to_xlsx_bytes(first_amount_combined: i16, rows: Vec<Value>) -> poem:
     fill.set_pattern_fill(pattern);
     header_style.set_fill(fill);
 
-    // Tulis header
-    for (col_idx, col_name) in column_names.iter().enumerate() {
+    // Tulis header berdasarkan `headers`
+    for (col_idx, col_name) in headers.iter().enumerate() {
         let cell = book
             .get_sheet_by_name_mut(sheet_name)
             .unwrap()
@@ -589,7 +583,7 @@ pub fn rows_to_xlsx_bytes(first_amount_combined: i16, rows: Vec<Value>) -> poem:
 
     row_idx += 1;
 
-    // Data matrix
+    // Bangun data matrix dari rows dan headers
     let mut data_matrix: Vec<Vec<String>> = vec![];
 
     for value in rows {
@@ -599,12 +593,12 @@ pub fn rows_to_xlsx_bytes(first_amount_combined: i16, rows: Vec<Value>) -> poem:
         };
 
         let mut row_data = vec![];
-        for col_name in &column_names {
+        for col_name in &headers {
             let cell_value = match obj.get(col_name).unwrap_or(&Value::Null) {
                 Value::Null => "".to_string(),
                 Value::Bool(b) => b.to_string(),
                 Value::Number(n) => n.to_string(),
-                Value::String(s) => s.to_string(),
+                Value::String(s) => s.clone(),
                 _ => "".to_string(),
             };
             row_data.push(cell_value);
@@ -622,10 +616,10 @@ pub fn rows_to_xlsx_bytes(first_amount_combined: i16, rows: Vec<Value>) -> poem:
         }
     }
 
-    // Gabung sel jika nilai sama (first_amount_combined)
+    // Gabung sel jika nilai sama (kolom tertentu)
     let mut last_seen = vec![None; first_amount_combined as usize];
     for (r, row_data) in data_matrix.iter().enumerate() {
-        for col_idx in 0..(first_amount_combined as usize).min(column_names.len()) {
+        for col_idx in 0..(first_amount_combined as usize).min(headers.len()) {
             if Some(&row_data[col_idx]) == last_seen[col_idx].as_ref() {
                 book.get_sheet_by_name_mut(sheet_name)
                     .unwrap()
@@ -646,47 +640,43 @@ pub fn rows_to_xlsx_bytes(first_amount_combined: i16, rows: Vec<Value>) -> poem:
     Ok(buffer)
 }
 
-pub fn rows_to_csv_string(header_flag: i16, delimiter: &str, rows: Vec<Value>) -> String {
+pub fn rows_to_csv_string(
+    header_flag: i16,
+    delimiter: &str,
+    rows: Vec<Value>,
+    headers: Vec<String>,
+) -> String {
     let mut result = String::new();
 
     if rows.is_empty() {
         return result;
     }
 
-    // Ambil header dari key pada object pertama
-    let first_obj = match rows[0].as_object() {
-        Some(obj) => obj,
-        None => return result,
-    };
-
-    let mut column_names: Vec<String> = first_obj.keys().cloned().collect();
-    column_names.sort(); // urutkan agar kolom konsisten
-
-    // Header
+    // Tulis header jika diminta
     if header_flag == 1 {
-        result.push_str(&column_names.join(delimiter));
+        result.push_str(&headers.join(delimiter));
         result.push('\n');
     }
 
     for row in rows {
         let obj = match row.as_object() {
             Some(obj) => obj,
-            None => continue,
+            None => continue, // skip jika bukan objek
         };
 
         let mut values = vec![];
 
-        for col in &column_names {
+        for col in &headers {
             let raw_val = obj.get(col).unwrap_or(&Value::Null);
             let value = match raw_val {
                 Value::Null => "".to_string(),
                 Value::Bool(b) => b.to_string(),
                 Value::Number(n) => n.to_string(),
                 Value::String(s) => s.to_string(),
-                _ => "".to_string(),
+                _ => "".to_string(), // fallback
             };
 
-            // Bungkus string jika mengandung delimiter, quote, atau newline
+            // Bungkus string jika mengandung karakter khusus
             let formatted_value =
                 if value.contains(delimiter) || value.contains('"') || value.contains('\n') {
                     format!("\"{}\"", value.replace('"', "\"\""))
@@ -704,11 +694,30 @@ pub fn rows_to_csv_string(header_flag: i16, delimiter: &str, rows: Vec<Value>) -
     result
 }
 
-pub fn rows_to_json_string(rows: Vec<Value>) -> String {
-    serde_json::to_string_pretty(&Value::Array(rows)).unwrap_or_else(|_| "[]".to_string())
+pub fn rows_to_json_string(rows: Vec<Value>, headers: Vec<String>) -> String {
+    let mut standardized_rows = Vec::new();
+
+    for row in rows {
+        let obj = match row.as_object() {
+            Some(o) => o,
+            None => continue, // skip jika bukan objek
+        };
+
+        let mut new_obj = serde_json::Map::new();
+
+        for header in &headers {
+            let val = obj.get(header).cloned().unwrap_or(Value::Null);
+            new_obj.insert(header.clone(), val);
+        }
+
+        standardized_rows.push(Value::Object(new_obj));
+    }
+
+    serde_json::to_string_pretty(&Value::Array(standardized_rows))
+        .unwrap_or_else(|_| "[]".to_string())
 }
 
-pub fn rows_to_xml_string(table_name: &str, rows: Vec<Value>) -> String {
+pub fn rows_to_xml_string(table_name: &str, rows: Vec<Value>, headers: Vec<String>) -> String {
     let mut result = String::new();
     result.push_str("<List>\n");
 
@@ -716,13 +725,14 @@ pub fn rows_to_xml_string(table_name: &str, rows: Vec<Value>) -> String {
         result.push_str(&format!("  <{}>\n", table_name));
 
         if let Value::Object(map) = row {
-            for (col_name, value) in map {
-                // Konversi nilai ke string dan escape karakter XML
+            for col_name in &headers {
+                let value = map.get(col_name).unwrap_or(&Value::Null);
+
                 let value_str = match value {
                     Value::Null => "".to_string(),
                     Value::Bool(b) => b.to_string(),
                     Value::Number(n) => n.to_string(),
-                    Value::String(s) => s,
+                    Value::String(s) => s.to_string(),
                     _ => value.to_string(), // fallback untuk array/object
                 };
 
