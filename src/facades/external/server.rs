@@ -1,6 +1,6 @@
 use crate::models::common::{DataResponse, PaginatedResponse};
 use crate::models::external::server::{EntryExternalServer, ExternalServer};
-use crate::schema::tbl_ext_server::dsl::*;
+use crate::schema::tbl_ext_server;
 use crate::utils::common::{self, validation_error_response};
 use crate::{db::DbPool, models::common::Pagination};
 use chrono::Utc;
@@ -23,9 +23,9 @@ pub fn list(
     let start = pagination.start.unwrap_or(0);
     let length = pagination.length.unwrap_or(10).min(100);
 
-    let mut query = tbl_ext_server.into_boxed();
+    let mut query = tbl_ext_server::table.into_boxed();
     if let Some(ref term) = pagination.search {
-        query = query.filter(cd.ilike(format!("%{}%", term)));
+        query = query.filter(tbl_ext_server::cd.ilike(format!("%{}%", term)));
     }
 
     let conn = &mut pool.get().map_err(|_| {
@@ -47,16 +47,18 @@ pub fn list(
     };
 
     if total > 0 {
-        let mut query = tbl_ext_server.into_boxed();
+        let mut query = tbl_ext_server::table.into_boxed();
         if let Some(ref term) = pagination.search {
-            query = query.filter(cd.ilike(format!("%{}%", term)));
+            query = query.filter(tbl_ext_server::cd.ilike(format!("%{}%", term)));
         }
 
         match (pagination.sort.as_deref(), pagination.dir.as_deref()) {
-            (Some("code"), Some("desc")) => query = query.order(cd.desc()),
-            (Some("code"), _) => query = query.order(cd.asc()),
-            (Some("createdDate"), Some("desc")) => query = query.order(dt_created.desc()),
-            (Some("createdDate"), _) => query = query.order(dt_created.asc()),
+            (Some("code"), Some("desc")) => query = query.order(tbl_ext_server::cd.desc()),
+            (Some("code"), _) => query = query.order(tbl_ext_server::cd.asc()),
+            (Some("createdDate"), Some("desc")) => {
+                query = query.order(tbl_ext_server::dt_created.desc())
+            }
+            (Some("createdDate"), _) => query = query.order(tbl_ext_server::dt_created.asc()),
             _ => {}
         }
 
@@ -93,8 +95,8 @@ pub fn get(
         )
     })?;
 
-    let ext_server = tbl_ext_server
-        .filter(id.eq(ext_server_id))
+    let ext_server = tbl_ext_server::table
+        .filter(tbl_ext_server::id.eq(ext_server_id))
         .first::<ExternalServer>(conn)
         .map_err(|_| common::error_message(StatusCode::NOT_FOUND, "information.notFound"))?;
 
@@ -118,8 +120,8 @@ pub fn add(
         )
     })?;
 
-    let max_id: Option<i16> = tbl_ext_server
-        .select(diesel::dsl::max(id))
+    let max_id: Option<i16> = tbl_ext_server::table
+        .select(diesel::dsl::max(tbl_ext_server::id))
         .first(conn)
         .map_err(|e| {
             eprintln!("Loading error: {}", e);
@@ -150,7 +152,7 @@ pub fn add(
             version: 0,
         };
 
-        let inserted = diesel::insert_into(tbl_ext_server)
+        let inserted = diesel::insert_into(tbl_ext_server::table)
             .values(&ext_server)
             .get_result::<ExternalServer>(conn)
             .map_err(|e| {
@@ -192,14 +194,14 @@ pub fn update(
     entry_ext_server.version = entry_ext_server.version + 1;
 
     let updated = diesel::update(
-        tbl_ext_server
-            .filter(id.eq(ext_server_id))
-            .filter(version.eq(&entry_ext_server.version - 1)),
+        tbl_ext_server::table
+            .filter(tbl_ext_server::id.eq(ext_server_id))
+            .filter(tbl_ext_server::version.eq(&entry_ext_server.version - 1)),
     )
     .set((
         &entry_ext_server,
-        updated_by.eq(Some(jwt_auth.claims.username.clone())),
-        dt_updated.eq(Some(Utc::now().naive_utc())),
+        tbl_ext_server::updated_by.eq(Some(jwt_auth.claims.username.clone())),
+        tbl_ext_server::dt_updated.eq(Some(Utc::now().naive_utc())),
     ))
     .get_result::<ExternalServer>(conn)
     .map_err(|e| {
@@ -226,11 +228,11 @@ pub fn delete(
         )
     })?;
 
-    diesel::update(tbl_ext_server.filter(id.eq(ext_server_id)))
+    diesel::update(tbl_ext_server::table.filter(tbl_ext_server::id.eq(ext_server_id)))
         .set((
-            is_del.eq(1),
-            updated_by.eq(Some(jwt_auth.claims.username.clone())),
-            dt_updated.eq(Some(Utc::now().naive_utc())),
+            tbl_ext_server::is_del.eq(1),
+            tbl_ext_server::updated_by.eq(Some(jwt_auth.claims.username.clone())),
+            tbl_ext_server::dt_updated.eq(Some(Utc::now().naive_utc())),
         ))
         .get_result::<ExternalServer>(conn)
         .map_err(|e| {

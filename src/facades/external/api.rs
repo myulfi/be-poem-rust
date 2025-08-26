@@ -1,6 +1,6 @@
 use crate::models::common::{DataResponse, PaginatedResponse};
 use crate::models::external::api::{EntryExternalApi, ExternalApi};
-use crate::schema::tbl_ext_api::dsl::*;
+use crate::schema::tbl_ext_api;
 use crate::utils::common::{self, validation_error_response};
 use crate::{db::DbPool, models::common::Pagination};
 use chrono::Utc;
@@ -23,9 +23,9 @@ pub fn list(
     let start = pagination.start.unwrap_or(0);
     let length = pagination.length.unwrap_or(10).min(100);
 
-    let mut query = tbl_ext_api.into_boxed();
+    let mut query = tbl_ext_api::table.into_boxed();
     if let Some(ref term) = pagination.search {
-        query = query.filter(nm.ilike(format!("%{}%", term)));
+        query = query.filter(tbl_ext_api::nm.ilike(format!("%{}%", term)));
     }
 
     let conn = &mut pool.get().map_err(|_| {
@@ -47,16 +47,18 @@ pub fn list(
     };
 
     if total > 0 {
-        let mut query = tbl_ext_api.into_boxed();
+        let mut query = tbl_ext_api::table.into_boxed();
         if let Some(ref term) = pagination.search {
-            query = query.filter(nm.ilike(format!("%{}%", term)));
+            query = query.filter(tbl_ext_api::nm.ilike(format!("%{}%", term)));
         }
 
         match (pagination.sort.as_deref(), pagination.dir.as_deref()) {
-            (Some("name"), Some("desc")) => query = query.order(nm.desc()),
-            (Some("name"), _) => query = query.order(nm.asc()),
-            (Some("createdDate"), Some("desc")) => query = query.order(dt_created.desc()),
-            (Some("createdDate"), _) => query = query.order(dt_created.asc()),
+            (Some("name"), Some("desc")) => query = query.order(tbl_ext_api::nm.desc()),
+            (Some("name"), _) => query = query.order(tbl_ext_api::nm.asc()),
+            (Some("createdDate"), Some("desc")) => {
+                query = query.order(tbl_ext_api::dt_created.desc())
+            }
+            (Some("createdDate"), _) => query = query.order(tbl_ext_api::dt_created.asc()),
             _ => {}
         }
 
@@ -93,8 +95,8 @@ pub fn get(
         )
     })?;
 
-    let ext_api = tbl_ext_api
-        .filter(id.eq(ext_api_id))
+    let ext_api = tbl_ext_api::table
+        .filter(tbl_ext_api::id.eq(ext_api_id))
         .first::<ExternalApi>(conn)
         .map_err(|_| common::error_message(StatusCode::NOT_FOUND, "information.notFound"))?;
 
@@ -118,8 +120,8 @@ pub fn add(
         )
     })?;
 
-    let max_id: Option<i16> = tbl_ext_api
-        .select(diesel::dsl::max(id))
+    let max_id: Option<i16> = tbl_ext_api::table
+        .select(diesel::dsl::max(tbl_ext_api::id))
         .first(conn)
         .map_err(|e| {
             eprintln!("Loading error: {}", e);
@@ -144,7 +146,7 @@ pub fn add(
             version: 0,
         };
 
-        let inserted = diesel::insert_into(tbl_ext_api)
+        let inserted = diesel::insert_into(tbl_ext_api::table)
             .values(&ext_api)
             .get_result::<ExternalApi>(conn)
             .map_err(|e| {
@@ -186,14 +188,14 @@ pub fn update(
     entry_ext_api.version = entry_ext_api.version + 1;
 
     let updated = diesel::update(
-        tbl_ext_api
-            .filter(id.eq(ext_api_id))
-            .filter(version.eq(&entry_ext_api.version - 1)),
+        tbl_ext_api::table
+            .filter(tbl_ext_api::id.eq(ext_api_id))
+            .filter(tbl_ext_api::version.eq(&entry_ext_api.version - 1)),
     )
     .set((
         &entry_ext_api,
-        updated_by.eq(Some(jwt_auth.claims.username.clone())),
-        dt_updated.eq(Some(Utc::now().naive_utc())),
+        tbl_ext_api::updated_by.eq(Some(jwt_auth.claims.username.clone())),
+        tbl_ext_api::dt_updated.eq(Some(Utc::now().naive_utc())),
     ))
     .get_result::<ExternalApi>(conn)
     .map_err(|e| {
@@ -220,11 +222,11 @@ pub fn delete(
         )
     })?;
 
-    diesel::update(tbl_ext_api.filter(id.eq(ext_api_id)))
+    diesel::update(tbl_ext_api::table.filter(tbl_ext_api::id.eq(ext_api_id)))
         .set((
-            is_del.eq(1),
-            updated_by.eq(Some(jwt_auth.claims.username.clone())),
-            dt_updated.eq(Some(Utc::now().naive_utc())),
+            tbl_ext_api::is_del.eq(1),
+            tbl_ext_api::updated_by.eq(Some(jwt_auth.claims.username.clone())),
+            tbl_ext_api::dt_updated.eq(Some(Utc::now().naive_utc())),
         ))
         .get_result::<ExternalApi>(conn)
         .map_err(|e| {

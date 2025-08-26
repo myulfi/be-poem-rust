@@ -1,5 +1,5 @@
 use crate::models::common::{DataResponse, PaginatedResponse};
-use crate::schema::tbl_example_template::dsl::*;
+use crate::schema::tbl_example_template;
 use crate::utils::common::{
     self, parse_ids_from_string, validate_id, validate_ids, validation_error_response,
 };
@@ -30,9 +30,9 @@ pub fn list(
     let start = pagination.start.unwrap_or(0);
     let length = pagination.length.unwrap_or(10).min(100);
 
-    let mut query = tbl_example_template.into_boxed();
+    let mut query = tbl_example_template::table.into_boxed();
     if let Some(ref term) = pagination.search {
-        query = query.filter(nm.ilike(format!("%{}%", term)));
+        query = query.filter(tbl_example_template::nm.ilike(format!("%{}%", term)));
     }
 
     let conn = &mut pool.get().map_err(|_| {
@@ -54,16 +54,18 @@ pub fn list(
     };
 
     if total > 0 {
-        let mut query = tbl_example_template.into_boxed();
+        let mut query = tbl_example_template::table.into_boxed();
         if let Some(ref term) = pagination.search {
-            query = query.filter(nm.ilike(format!("%{}%", term)));
+            query = query.filter(tbl_example_template::nm.ilike(format!("%{}%", term)));
         }
 
         match (pagination.sort.as_deref(), pagination.dir.as_deref()) {
-            (Some("name"), Some("desc")) => query = query.order(nm.desc()),
-            (Some("name"), _) => query = query.order(nm.asc()),
-            (Some("createdDate"), Some("desc")) => query = query.order(dt_created.desc()),
-            (Some("createdDate"), _) => query = query.order(dt_created.asc()),
+            (Some("name"), Some("desc")) => query = query.order(tbl_example_template::nm.desc()),
+            (Some("name"), _) => query = query.order(tbl_example_template::nm.asc()),
+            (Some("createdDate"), Some("desc")) => {
+                query = query.order(tbl_example_template::dt_created.desc())
+            }
+            (Some("createdDate"), _) => query = query.order(tbl_example_template::dt_created.asc()),
             _ => {}
         }
 
@@ -103,8 +105,8 @@ pub fn get(
         )
     })?;
 
-    let example_template = tbl_example_template
-        .filter(id.eq(example_template_id))
+    let example_template = tbl_example_template::table
+        .filter(tbl_example_template::id.eq(example_template_id))
         .first::<ExampleTemplate>(conn)
         .map_err(|_| common::error_message(StatusCode::NOT_FOUND, "information.notFound"))?;
 
@@ -147,7 +149,7 @@ pub fn add(
         )
     })?;
 
-    let inserted = diesel::insert_into(tbl_example_template)
+    let inserted = diesel::insert_into(tbl_example_template::table)
         .values(&example_template)
         .get_result::<ExampleTemplate>(conn)
         .map_err(|e| {
@@ -184,15 +186,15 @@ pub fn update(
     entry_example_template.version = entry_example_template.version + 1;
 
     let updated = diesel::update(
-        tbl_example_template
-            .filter(id.eq(example_template_id))
-            .filter(version.eq(&entry_example_template.version - 1)),
+        tbl_example_template::table
+            .filter(tbl_example_template::id.eq(example_template_id))
+            .filter(tbl_example_template::version.eq(&entry_example_template.version - 1)),
     )
     // .set(&update)
     .set((
         &entry_example_template,
-        updated_by.eq(Some(jwt_auth.claims.username.clone())),
-        dt_updated.eq(Some(Utc::now().naive_utc())),
+        tbl_example_template::updated_by.eq(Some(jwt_auth.claims.username.clone())),
+        tbl_example_template::dt_updated.eq(Some(Utc::now().naive_utc())),
     ))
     .get_result::<ExampleTemplate>(conn)
     .map_err(|e| {
@@ -222,7 +224,9 @@ pub fn delete(
         )
     })?;
 
-    match diesel::delete(tbl_example_template.filter(id.eq_any(ids))).execute(conn) {
+    match diesel::delete(tbl_example_template::table.filter(tbl_example_template::id.eq_any(ids)))
+        .execute(conn)
+    {
         Ok(affected_rows) => {
             if affected_rows == 0 {
                 Err(common::error_message(
