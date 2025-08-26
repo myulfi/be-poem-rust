@@ -54,10 +54,12 @@ use sqlx::{Column, Pool, Row};
 use sqlx::{MySql, Postgres};
 
 use crate::database_pool::DatabasePool;
-use crate::models::common::{DataResponse, PaginatedResponse, Pagination};
+use crate::models::common::{
+    DataResponse, LoadedMoreResponse, PaginatedLoadedMoreResponse, PaginatedResponse, Pagination,
+};
 use crate::models::external::database::{EntryQueryManual, ExternalDatabaseQuery, QueryManual};
 use crate::schema::{tbl_ext_database_query, tbl_query_manual};
-use crate::utils::common::{parse_pagination, validate_id};
+use crate::utils::common::{encode_special_chars, parse_pagination, validate_id};
 use crate::utils::database::{
     convert_to_count_query, extract_columns_info_mysql, extract_columns_info_postgres,
     extract_query_parts, is_only_comment, is_sql_type, rows_to_csv_string,
@@ -74,19 +76,25 @@ use serde_json::{Value, json};
 fn get_ext_database_info(
     conn: &mut PgConnection,
     ext_database_id: i16,
-) -> poem::Result<(String, String)> {
-    let (username, password, db_connection, mt_database_type_id): (String, String, String, i16) =
-        tbl_ext_database::table
-            .filter(tbl_ext_database::id.eq(ext_database_id))
-            .filter(tbl_ext_database::is_del.eq(0))
-            .select((
-                tbl_ext_database::username,
-                tbl_ext_database::password,
-                tbl_ext_database::db_connection,
-                tbl_ext_database::mt_database_type_id,
-            ))
-            .first::<(String, String, String, i16)>(conn)
-            .map_err(|_| common::error_message(StatusCode::NOT_FOUND, "information.notFound"))?;
+) -> poem::Result<(String, i16, String)> {
+    let (username, password, db_connection, mt_database_type_id, is_use_page): (
+        String,
+        String,
+        String,
+        i16,
+        i16,
+    ) = tbl_ext_database::table
+        .filter(tbl_ext_database::id.eq(ext_database_id))
+        .filter(tbl_ext_database::is_del.eq(0))
+        .select((
+            tbl_ext_database::username,
+            tbl_ext_database::password,
+            tbl_ext_database::db_connection,
+            tbl_ext_database::mt_database_type_id,
+            tbl_ext_database::is_use_page,
+        ))
+        .first::<(String, String, String, i16, i16)>(conn)
+        .map_err(|_| common::error_message(StatusCode::NOT_FOUND, "information.notFound"))?;
 
     let (url, pagination): (String, String) = tbl_mt_database_type::table
         .filter(tbl_mt_database_type::id.eq(mt_database_type_id))
@@ -97,10 +105,10 @@ fn get_ext_database_info(
     // let url = format!("postgres://{0}:{1}@{2}", usr, password, db_connection)
     let url = url
         .replace("{0}", &username)
-        .replace("{1}", &password)
+        .replace("{1}", &encode_special_chars(&password))
         .replace("{2}", &db_connection);
 
-    Ok((url, pagination))
+    Ok((url, is_use_page, pagination))
 }
 
 async fn connect_to_external_database(connection_str: &str) -> poem::Result<DatabasePool> {
@@ -141,73 +149,78 @@ fn get_manual_query(conn: &mut PgConnection, query_manual_id: i64) -> poem::Resu
 async fn get_query_manual_pool(
     conn: &mut PgConnection,
     query_manual_id: i64,
-) -> poem::Result<(DatabasePool, String, String)> {
+) -> poem::Result<(DatabasePool, String, i16, String)> {
     let (ext_database_id, query_string) = get_manual_query(conn, query_manual_id)?;
-    let (pool, pagination) = get_external_pool(conn, ext_database_id).await?;
-    Ok((pool, query_string, pagination))
+    let (pool, is_use_page, pagination) = get_external_pool(conn, ext_database_id).await?;
+    Ok((pool, query_string, is_use_page, pagination))
 }
 
 async fn get_query_manual_row(
     conn: &mut PgConnection,
     query_manual_id: i64,
 ) -> poem::Result<(Vec<Value>, Vec<String>, String)> {
-    let (ext_pool, query_str, _) = get_query_manual_pool(conn, query_manual_id).await?;
+    let (ext_pool, query_str, is_use_page, _) =
+        get_query_manual_pool(conn, query_manual_id).await?;
 
-    match &ext_pool {
-        DatabasePool::Postgres(pg_pool) => {
-            let rows = sqlx::query(&query_str)
-                .fetch_all(pg_pool)
-                .await
-                .map_err(|e| {
-                    eprintln!("Query error: {}", e);
-                    poem::Error::from_status(StatusCode::INTERNAL_SERVER_ERROR)
-                })?;
+    if 1 == is_use_page {
+        match &ext_pool {
+            DatabasePool::Postgres(pg_pool) => {
+                let rows = sqlx::query(&query_str)
+                    .fetch_all(pg_pool)
+                    .await
+                    .map_err(|e| {
+                        eprintln!("Query error: {}", e);
+                        poem::Error::from_status(StatusCode::INTERNAL_SERVER_ERROR)
+                    })?;
 
-            let headers = if let Some(row) = rows.first() {
-                row.columns()
-                    .iter()
-                    .map(|col| col.name().to_string())
-                    .collect()
-            } else {
-                Vec::new()
-            };
+                let headers = if let Some(row) = rows.first() {
+                    row.columns()
+                        .iter()
+                        .map(|col| col.name().to_string())
+                        .collect()
+                } else {
+                    Vec::new()
+                };
 
-            let results = rows_to_json_postgres(&rows);
+                let results = rows_to_json_postgres(&rows);
 
-            Ok((results, headers, query_str))
+                Ok((results, headers, query_str))
+            }
+            DatabasePool::MySql(my_pool) => {
+                let rows = sqlx::query(&query_str)
+                    .fetch_all(my_pool)
+                    .await
+                    .map_err(|e| {
+                        eprintln!("Query error: {}", e);
+                        poem::Error::from_status(StatusCode::INTERNAL_SERVER_ERROR)
+                    })?;
+
+                let headers = if let Some(row) = rows.first() {
+                    row.columns()
+                        .iter()
+                        .map(|col| col.name().to_string())
+                        .collect()
+                } else {
+                    Vec::new()
+                };
+
+                let results = rows_to_json_mysql(&rows);
+
+                Ok((results, headers, query_str))
+            }
         }
-        DatabasePool::MySql(my_pool) => {
-            let rows = sqlx::query(&query_str)
-                .fetch_all(my_pool)
-                .await
-                .map_err(|e| {
-                    eprintln!("Query error: {}", e);
-                    poem::Error::from_status(StatusCode::INTERNAL_SERVER_ERROR)
-                })?;
-
-            let headers = if let Some(row) = rows.first() {
-                row.columns()
-                    .iter()
-                    .map(|col| col.name().to_string())
-                    .collect()
-            } else {
-                Vec::new()
-            };
-
-            let results = rows_to_json_mysql(&rows);
-
-            Ok((results, headers, query_str))
-        }
+    } else {
+        Ok((Vec::new(), Vec::new(), query_str))
     }
 }
 
 async fn get_external_pool(
     conn: &mut PgConnection,
     ext_database_id: i16,
-) -> poem::Result<(DatabasePool, String)> {
-    let (url, pagination) = get_ext_database_info(conn, ext_database_id)?;
+) -> poem::Result<(DatabasePool, i16, String)> {
+    let (url, is_use_page, pagination) = get_ext_database_info(conn, ext_database_id)?;
     let pool = connect_to_external_database(&url).await?;
-    Ok((pool, pagination))
+    Ok((pool, is_use_page, pagination))
 }
 
 pub async fn query_with_pagination(
@@ -216,14 +229,16 @@ pub async fn query_with_pagination(
     query: &str,
     start: i64,
     length: i64,
-) -> poem::Result<PaginatedResponse<Value>> {
-    let (ext_pool, pagination) = get_external_pool(conn, ext_database_id).await?;
+) -> poem::Result<PaginatedLoadedMoreResponse<Value>> {
+    let (ext_pool, is_use_page, pagination) = get_external_pool(conn, ext_database_id).await?;
     match ext_pool {
         DatabasePool::Postgres(ref pg_pool) => {
-            query_with_pagination_postgres(pg_pool, &pagination, query, start, length).await
+            query_with_pagination_postgres(pg_pool, &pagination, query, is_use_page, start, length)
+                .await
         }
         DatabasePool::MySql(ref my_pool) => {
-            query_with_pagination_mysql(my_pool, &pagination, query, start, length).await
+            query_with_pagination_mysql(my_pool, &pagination, query, is_use_page, start, length)
+                .await
         }
     }
 }
@@ -232,42 +247,57 @@ async fn query_with_pagination_postgres(
     pool: &Pool<Postgres>,
     pagination: &str,
     base_query: &str,
+    is_use_page: i16,
     start: i64,
     length: i64,
-) -> poem::Result<PaginatedResponse<Value>> {
-    if let Some(count_query) = convert_to_count_query(base_query) {
-        let total: i64 = sqlx::query_scalar(&count_query)
-            .fetch_one(pool)
+) -> poem::Result<PaginatedLoadedMoreResponse<Value>> {
+    let total = if is_use_page == 1 {
+        if let Some(count_query) = convert_to_count_query(base_query) {
+            sqlx::query_scalar::<_, i64>(&count_query)
+                .fetch_one(pool)
+                .await
+                .unwrap_or(0)
+        } else {
+            0
+        }
+    } else {
+        0
+    };
+
+    let mut data = if total > 0 || is_use_page != 1 {
+        let limit = if is_use_page == 1 { length } else { length + 1 };
+        let paginated_query = pagination
+            .replace("{0}", base_query)
+            .replace("{1}", &start.to_string())
+            .replace("{2}", &limit.to_string());
+
+        let rows = sqlx::query(&paginated_query)
+            .fetch_all(pool)
             .await
-            .map_err(|_| {
-                common::error_message(StatusCode::INTERNAL_SERVER_ERROR, "information.notFound")
+            .map_err(|e| {
+                eprintln!("Query error: {}", e);
+                poem::Error::from_status(StatusCode::INTERNAL_SERVER_ERROR)
             })?;
 
-        let data = if total > 0 {
-            let paginated_query = pagination
-                .replace("{0}", base_query)
-                .replace("{1}", &start.to_string())
-                .replace("{2}", &length.to_string());
-
-            let rows = sqlx::query(&paginated_query)
-                .fetch_all(pool)
-                .await
-                .map_err(|e| {
-                    eprintln!("Query error: {}", e);
-                    poem::Error::from_status(StatusCode::INTERNAL_SERVER_ERROR)
-                })?;
-
-            rows_to_json_postgres(&rows)
-        } else {
-            vec![]
-        };
-
-        Ok(PaginatedResponse { total, data })
+        rows_to_json_postgres(&rows)
     } else {
-        Ok(PaginatedResponse {
-            total: 0,
-            data: vec![],
-        })
+        vec![]
+    };
+
+    if is_use_page == 1 {
+        Ok(PaginatedLoadedMoreResponse::Paginated(PaginatedResponse {
+            total,
+            data,
+        }))
+    } else {
+        let mut loaded = 0;
+        if data.len() > length as usize {
+            data.pop();
+            loaded = 1;
+        }
+        Ok(PaginatedLoadedMoreResponse::LoadedMore(
+            LoadedMoreResponse { loaded, data },
+        ))
     }
 }
 
@@ -275,42 +305,57 @@ async fn query_with_pagination_mysql(
     pool: &Pool<MySql>,
     pagination: &str,
     base_query: &str,
+    is_use_page: i16,
     start: i64,
     length: i64,
-) -> poem::Result<PaginatedResponse<Value>> {
-    if let Some(count_query) = convert_to_count_query(base_query) {
-        let total: i64 = sqlx::query_scalar(&count_query)
-            .fetch_one(pool)
+) -> poem::Result<PaginatedLoadedMoreResponse<Value>> {
+    let total = if is_use_page == 1 {
+        if let Some(count_query) = convert_to_count_query(base_query) {
+            sqlx::query_scalar::<_, i64>(&count_query)
+                .fetch_one(pool)
+                .await
+                .unwrap_or(0)
+        } else {
+            0
+        }
+    } else {
+        0
+    };
+
+    let mut data = if total > 0 || is_use_page != 1 {
+        let limit = if is_use_page == 1 { length } else { length + 1 };
+        let paginated_query = pagination
+            .replace("{0}", base_query)
+            .replace("{1}", &start.to_string())
+            .replace("{2}", &limit.to_string());
+
+        let rows = sqlx::query(&paginated_query)
+            .fetch_all(pool)
             .await
-            .map_err(|_| {
-                common::error_message(StatusCode::INTERNAL_SERVER_ERROR, "information.notFound")
+            .map_err(|e| {
+                eprintln!("Query error: {}", e);
+                poem::Error::from_status(StatusCode::INTERNAL_SERVER_ERROR)
             })?;
 
-        let data = if total > 0 {
-            let paginated_query = pagination
-                .replace("{0}", base_query)
-                .replace("{1}", &start.to_string())
-                .replace("{2}", &length.to_string());
-
-            let rows = sqlx::query(&paginated_query)
-                .fetch_all(pool)
-                .await
-                .map_err(|e| {
-                    eprintln!("Query error: {}", e);
-                    poem::Error::from_status(StatusCode::INTERNAL_SERVER_ERROR)
-                })?;
-
-            rows_to_json_mysql(&rows)
-        } else {
-            vec![]
-        };
-
-        Ok(PaginatedResponse { total, data })
+        rows_to_json_mysql(&rows)
     } else {
-        Ok(PaginatedResponse {
-            total: 0,
-            data: vec![],
-        })
+        vec![]
+    };
+
+    if is_use_page == 1 {
+        Ok(PaginatedLoadedMoreResponse::Paginated(PaginatedResponse {
+            total,
+            data,
+        }))
+    } else {
+        let mut loaded = 0;
+        if data.len() > length as usize {
+            data.pop();
+            loaded = 1;
+        }
+        Ok(PaginatedLoadedMoreResponse::LoadedMore(
+            LoadedMoreResponse { loaded, data },
+        ))
     }
 }
 
@@ -319,7 +364,7 @@ async fn run_and_extract_columns(
     ext_database_id: i16,
     raw_query: &str,
 ) -> poem::Result<Vec<serde_json::Value>> {
-    let (ext_pool, pagination) = get_external_pool(conn, ext_database_id).await?;
+    let (ext_pool, _, pagination) = get_external_pool(conn, ext_database_id).await?;
 
     let query = pagination
         .replace("{0}", raw_query)
@@ -371,8 +416,11 @@ pub async fn connect(
         )
     })?;
 
-    let _ = get_external_pool(conn, ext_database_id).await?;
-    Ok(StatusCode::NO_CONTENT)
+    let (_, is_use_page, _) = get_external_pool(conn, ext_database_id).await?;
+
+    Ok(Json(DataResponse {
+        data: json!({ "usePageFlag": is_use_page}),
+    }))
 }
 
 #[handler]
@@ -391,7 +439,7 @@ pub async fn query_object_list(
         )
     })?;
 
-    let (ext_pool, pagination) = get_external_pool(conn, ext_database_id).await?;
+    let (ext_pool, _, pagination) = get_external_pool(conn, ext_database_id).await?;
 
     let response = match ext_pool {
         DatabasePool::Postgres(ref pg_pool) => {
@@ -435,7 +483,7 @@ pub async fn query_object_list(
             --{1}
             --ORDER BY {2}
         "#;
-            query_with_pagination_postgres(pg_pool, &pagination, query, start, length).await?
+            query_with_pagination_postgres(pg_pool, &pagination, query, 1, start, length).await?
         }
         DatabasePool::MySql(ref my_pool) => {
             let query = r#"
@@ -445,7 +493,7 @@ pub async fn query_object_list(
                 object_type
             FROM (
                 SELECT
-                    TABLE_NAME AS object_id,
+                    0 AS object_id,
                     TABLE_NAME AS object_name,
                     CASE WHEN TABLE_TYPE = 'BASE TABLE' THEN 'table' ELSE 'view' END AS object_type
                 FROM information_schema.tables
@@ -454,17 +502,15 @@ pub async fn query_object_list(
                 UNION ALL
 
                 SELECT
-                    ROUTINE_NAME AS object_id,
+                    0 AS object_id,
                     ROUTINE_NAME AS object_name,
                     ROUTINE_TYPE AS object_type
                 FROM information_schema.routines
                 WHERE ROUTINE_SCHEMA = DATABASE()
             ) AS objects
             WHERE 1 = 1
-            --{1}
-            --ORDER BY {2}
         "#;
-            query_with_pagination_mysql(my_pool, &pagination, query, start, length).await?
+            query_with_pagination_mysql(my_pool, &pagination, query, 1, start, length).await?
         }
     };
 
@@ -557,7 +603,7 @@ pub async fn query_manual_run(
         )
     })?;
 
-    let (ext_pool, pagination) = get_external_pool(conn, ext_database_id).await?;
+    let (ext_pool, _, pagination) = get_external_pool(conn, ext_database_id).await?;
 
     let mut success_response: Option<Value> = None;
     let mut results: Vec<Value> = Vec::new();

@@ -9,10 +9,23 @@ pub struct Pagination {
     pub dir: Option<String>,
 }
 
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 pub struct PaginatedResponse<T> {
     pub total: i64,
     pub data: Vec<T>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct LoadedMoreResponse<T> {
+    pub loaded: i64,
+    pub data: Vec<T>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(untagged)]
+pub enum PaginatedLoadedMoreResponse<T> {
+    Paginated(PaginatedResponse<T>),
+    LoadedMore(LoadedMoreResponse<T>),
 }
 
 #[derive(Serialize)]

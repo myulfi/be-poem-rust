@@ -106,3 +106,16 @@ pub fn parse_pagination(pagination: &Pagination) -> (i64, i64) {
     let length = pagination.length.unwrap_or(10).min(100);
     (start, length)
 }
+
+pub fn encode_special_chars(input: &str) -> String {
+    input
+        .chars()
+        .map(|c| {
+            if !c.is_alphanumeric() && c.is_ascii() {
+                format!("%{:02X}", c as u8)
+            } else {
+                c.to_string()
+            }
+        })
+        .collect()
+}
