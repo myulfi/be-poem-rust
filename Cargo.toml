@@ -7,6 +7,7 @@ edition = "2024"
 poem = { version = "3.1.11", features = ["websocket"] }
 poem-openapi = { version = "5.1.2", features = ["swagger-ui"] }
 tokio = { version = "1", features = ["full"] }
+sqlx = { version = "0.7", features = ["mysql", "postgres", "macros", "runtime-tokio-native-tls", "bigdecimal"] }
 diesel = { version = "2.0", features = ["postgres", "r2d2", "chrono", "numeric"] }
 dotenvy = "0.15"
 serde = { version = "1.0", features = ["derive"] }
@@ -22,7 +23,9 @@ futures = "0.3"
 validator = "0.18"
 validator_derive = "0.18"
 tokio-postgres = "0.7.13"
-rust_decimal = { version = "1.36", features = ["db-tokio-postgres"] }
+rust_decimal = { version = "1.36", features = ["db-tokio-postgres", "serde" ] }
 log = "0.4"
 regex = "1"
 umya-spreadsheet = "1.1"
+ssh2 = "0.9"
+tempfile = "3"
