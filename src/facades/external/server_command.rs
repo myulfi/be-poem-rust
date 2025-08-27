@@ -1,6 +1,5 @@
 use std::io::{Read, Write};
 use std::net::TcpStream;
-use std::path::PathBuf;
 
 use crate::db::DbPool;
 use crate::models::common::DataResponse;
@@ -8,6 +7,9 @@ use crate::schema::tbl_ext_server;
 use crate::utils::common;
 use diesel::prelude::*;
 
+use poem::web::Query;
+use serde::Deserialize;
+use serde_json::json as json_marco;
 use ssh2::Session;
 
 use poem::{
@@ -16,23 +18,23 @@ use poem::{
     web::{Data, Json, Path},
 };
 
-use serde_json::json;
 use tempfile::NamedTempFile;
 
-#[handler]
-pub async fn connect(
-    pool: Data<&DbPool>,
-    _: crate::auth::middleware::JwtAuth,
-    Path(ext_server_id): Path<i16>,
-) -> Result<impl IntoResponse> {
-    let conn = &mut pool.get().map_err(|_| {
-        common::error_message(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "information.connectionFailed",
-        )
-    })?;
+#[derive(Deserialize)]
+struct DirectoryPagination {
+    pub start: Option<i64>,
+    pub length: Option<i64>,
+    pub search: Option<String>,
+    pub sort: Option<String>,
+    pub dir: Option<String>,
+    pub directory: String,
+}
 
-    let (mt_server_type_id, ip, port, username, password, private_key) = tbl_ext_server::table
+fn get_server_data(
+    conn: &mut PgConnection,
+    ext_server_id: i16,
+) -> Result<(i16, String, i16, String, Option<String>, Option<String>), poem::Error> {
+    tbl_ext_server::table
         .filter(tbl_ext_server::id.eq(ext_server_id))
         .filter(tbl_ext_server::is_del.eq(0))
         .select((
@@ -44,36 +46,42 @@ pub async fn connect(
             tbl_ext_server::private_key,
         ))
         .first::<(i16, String, i16, String, Option<String>, Option<String>)>(conn)
-        .map_err(|_| common::error_message(StatusCode::NOT_FOUND, "information.notFound"))?;
+        .map_err(|_| common::error_message(StatusCode::NOT_FOUND, "information.notFound"))
+}
 
+fn create_ssh_session(
+    ip: &str,
+    port: i16,
+    username: &str,
+    password: &Option<String>,
+    private_key: &Option<String>,
+) -> Result<Session, poem::Error> {
     let tcp = TcpStream::connect(format!("{}:{}", ip, port))
         .map_err(|_| common::error_message(StatusCode::BAD_REQUEST, "ssh.connectionFailed"))?;
 
     let mut session = Session::new().map_err(|_| {
         common::error_message(StatusCode::INTERNAL_SERVER_ERROR, "ssh.sessionInitFailed")
     })?;
+
     session.set_tcp_stream(tcp);
     session.handshake().map_err(|_| {
         common::error_message(StatusCode::INTERNAL_SERVER_ERROR, "ssh.handshakeFailed")
     })?;
 
-    if let Some(ref pwd) = password {
+    if let Some(pwd) = password {
         session
-            .userauth_password(&username, pwd)
+            .userauth_password(username, pwd)
             .map_err(|_| common::error_message(StatusCode::UNAUTHORIZED, "ssh.authFailed"))?;
-    } else if let Some(ref key) = private_key {
+    } else if let Some(key) = private_key {
         let mut temp_key = NamedTempFile::new().map_err(|_| {
             common::error_message(StatusCode::INTERNAL_SERVER_ERROR, "ssh.tempFileFailed")
         })?;
-
         temp_key.write_all(key.as_bytes()).map_err(|_| {
             common::error_message(StatusCode::INTERNAL_SERVER_ERROR, "ssh.writeKeyFailed")
         })?;
 
-        let path: PathBuf = temp_key.path().into();
-
         session
-            .userauth_pubkey_file(&username, None, &path, None)
+            .userauth_pubkey_file(username, None, &temp_key.path(), None)
             .map_err(|_| common::error_message(StatusCode::UNAUTHORIZED, "ssh.authFailed"))?;
 
         // let private_key_path = Path::new("/path/to/id_rsa");
@@ -94,43 +102,151 @@ pub async fn connect(
         ));
     }
 
-    // 🧪 Jalankan command remote
+    Ok(session)
+}
+
+fn run_ssh_command(session: &Session, command: &str) -> Result<String, poem::Error> {
     let mut channel = session.channel_session().map_err(|_| {
         common::error_message(StatusCode::INTERNAL_SERVER_ERROR, "ssh.channelFailed")
     })?;
 
-    if mt_server_type_id == 1 {
-        channel.exec("ls -la").map_err(|_| {
-            common::error_message(StatusCode::INTERNAL_SERVER_ERROR, "ssh.commandFailed")
-        })?;
-    } else if mt_server_type_id == 2 {
-        channel.exec("dir").map_err(|_| {
-            common::error_message(StatusCode::INTERNAL_SERVER_ERROR, "ssh.commandFailed")
-        })?;
-    } else {
-        return Err(common::error_message(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "ssh.unknownServerType",
-        ));
-    }
+    channel.exec(command).map_err(|_| {
+        common::error_message(StatusCode::INTERNAL_SERVER_ERROR, "ssh.commandFailed")
+    })?;
 
     let mut output = String::new();
     channel
         .read_to_string(&mut output)
         .map_err(|_| common::error_message(StatusCode::INTERNAL_SERVER_ERROR, "ssh.readFailed"))?;
+    channel.wait_close().ok();
+    Ok(output)
+}
 
-    // ✅ Cetak output baris per baris
-    for line in output.lines() {
-        println!("{}", line);
+#[handler]
+pub async fn connect(
+    pool: Data<&DbPool>,
+    _: crate::auth::middleware::JwtAuth,
+    Path(ext_server_id): Path<i16>,
+) -> Result<impl IntoResponse> {
+    let conn = &mut pool.get().map_err(|_| {
+        common::error_message(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "information.connectionFailed",
+        )
+    })?;
+
+    let (mt_server_type_id, ip, port, username, password, private_key) =
+        get_server_data(conn, ext_server_id)?;
+
+    let session = create_ssh_session(&ip, port, &username, &password, &private_key)?;
+
+    let command = match mt_server_type_id {
+        1 => "pwd",
+        2 => "cd",
+        _ => {
+            return Err(common::error_message(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "ssh.unknownServerType",
+            ));
+        }
+    };
+
+    let output = run_ssh_command(&session, command)?;
+    let dir = output.lines().next().unwrap_or("").trim();
+
+    let dir_vec: Vec<String> = match mt_server_type_id {
+        1 => dir
+            .split('/')
+            .filter(|s| !s.is_empty())
+            .map(String::from)
+            .collect(),
+        2 => dir
+            .split('\\')
+            .filter(|s| !s.is_empty())
+            .map(String::from)
+            .collect(),
+        _ => vec![],
+    };
+
+    Ok(Json(DataResponse { data: dir_vec }))
+}
+
+#[handler]
+pub async fn directory(
+    pool: Data<&DbPool>,
+    _: crate::auth::middleware::JwtAuth,
+    Path(ext_server_id): Path<i16>,
+    Query(pagination): Query<DirectoryPagination>,
+) -> Result<impl IntoResponse> {
+    let conn = &mut pool.get().map_err(|_| {
+        common::error_message(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "information.connectionFailed",
+        )
+    })?;
+
+    let (mt_server_type_id, ip, port, username, password, private_key) =
+        get_server_data(conn, ext_server_id)?;
+
+    let session = create_ssh_session(&ip, port, &username, &password, &private_key)?;
+
+    let mut dir_path = pagination.directory.trim().to_string();
+    if mt_server_type_id == 1 && !dir_path.starts_with('/') {
+        dir_path = format!("/{}", dir_path);
     }
 
-    channel.wait_close().ok();
+    let command = match mt_server_type_id {
+        1 => format!(
+            r#"cd "{}" && ls -A | while read f; do [ -e "$f" ] || continue; stat --format="%n|%s|%w|%y|%U|%A" "$f"; done"#,
+            dir_path
+        ),
+        2 => format!(
+            r#"powershell -Command "Get-ChildItem -Path '{}' | ForEach-Object {{ '{{0}}|{{1}}|{{2}}|{{3}}|{{4}}|{{5}}' -f $_.Name, $_.Length, $_.CreationTimeUtc, $_.LastWriteTimeUtc, $_.Attributes, $_.Mode }}" "#,
+            dir_path
+        ),
+        _ => {
+            return Err(common::error_message(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "ssh.unknownServerType",
+            ));
+        }
+    };
 
-    // ✅ Berikan output SSH ke response
-    Ok(Json(DataResponse {
-        data: json!({
-            "output": output,
-            "extServerId": ext_server_id,
-        }),
-    }))
+    let output = run_ssh_command(&session, &command)?;
+
+    let data = output
+        .lines()
+        .filter_map(|line| {
+            let parts: Vec<&str> = line.split('|').collect();
+            if parts.len() < 6 {
+                return None;
+            }
+
+            let perms = parts[5];
+
+            Some(json_marco!({
+                "name": parts[0],
+                "size": parts[1].parse::<u64>().unwrap_or(0),
+                "created_date": parts[2],
+                "modified_date": parts[3],
+                "owner": parts[4],
+                "status": {
+                    "read": perms.contains("r"),
+                    "write": perms.contains("w"),
+                    "execute": perms.contains("x")
+                }
+            }))
+        })
+        .collect::<Vec<_>>();
+
+    let directory_parts: Vec<String> = dir_path
+        .split('/')
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+        .collect();
+
+    Ok(poem::web::Json(json_marco!({
+        "directory": directory_parts,
+        "data": data
+    })))
 }
