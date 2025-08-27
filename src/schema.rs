@@ -143,10 +143,25 @@ table! {
 }
 
 table! {
+    tbl_mt_server_type (id) {
+        id -> SmallInt,
+        nm -> Varchar,
+        icon -> Varchar,
+        is_del -> SmallInt,
+        created_by -> Varchar,
+        dt_created -> Timestamp,
+        updated_by -> Nullable<Varchar>,
+        dt_updated -> Nullable<Timestamp>,
+        version -> SmallInt,
+    }
+}
+
+table! {
     tbl_ext_server (id) {
         id -> SmallInt,
         cd -> Varchar,
         dscp -> Nullable<Varchar>,
+        mt_server_type_id -> SmallInt,
         ip -> Varchar,
         port -> SmallInt,
         username -> Varchar,

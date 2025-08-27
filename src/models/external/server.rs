@@ -12,6 +12,8 @@ pub struct ExternalServer {
     pub cd: String,
     #[serde(rename = "description")]
     pub dscp: Option<String>,
+    #[serde(rename = "serverTypeId")]
+    pub mt_server_type_id: i16,
     pub ip: String,
     pub port: i16,
     pub username: String,
@@ -44,14 +46,15 @@ pub struct EntryExternalServer {
     pub cd: String,
     #[serde(rename = "description")]
     pub dscp: Option<String>,
+    #[serde(rename = "serverTypeId")]
+    #[validate(range(min = 1, message = "Type must be filled"))]
+    pub mt_server_type_id: i16,
     pub ip: String,
     pub port: i16,
     #[validate(length(min = 1, message = "Username must be filled"))]
     pub username: String,
     pub password: Option<String>,
     pub private_key: Option<String>,
-    #[serde(rename = "lockFlag")]
-    pub is_lock: i16,
     #[serde(default)]
     pub version: i16,
 }

@@ -52,7 +52,7 @@ pub struct EntryExternalDatabase {
     #[serde(rename = "externalServerId")]
     pub ext_server_id: i16,
     #[serde(rename = "databaseTypeId")]
-    #[validate(range(min = 1, max = 8, message = "Type must be min 1"))]
+    #[validate(range(min = 1, message = "Type must be filled"))]
     pub mt_database_type_id: i16,
     #[validate(length(min = 1, message = "Username must be filled"))]
     pub username: String,

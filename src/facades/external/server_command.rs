@@ -4,7 +4,9 @@ use std::path::PathBuf;
 
 use crate::db::DbPool;
 use crate::models::common::DataResponse;
+use crate::schema::tbl_ext_server;
 use crate::utils::common;
+use diesel::prelude::*;
 
 use ssh2::Session;
 
@@ -23,23 +25,28 @@ pub async fn connect(
     _: crate::auth::middleware::JwtAuth,
     Path(ext_server_id): Path<i16>,
 ) -> Result<impl IntoResponse> {
-    let _conn = &mut pool.get().map_err(|_| {
+    let conn = &mut pool.get().map_err(|_| {
         common::error_message(
             StatusCode::INTERNAL_SERVER_ERROR,
             "information.connectionFailed",
         )
     })?;
 
-    // 🧠 Untuk keperluan contoh, kita hardcode host dan credential
-    let host = "your.server.com:22";
-    let username = "your_username";
-    let private_key = "private_key";
+    let (mt_server_type_id, ip, port, username, password, private_key) = tbl_ext_server::table
+        .filter(tbl_ext_server::id.eq(ext_server_id))
+        .filter(tbl_ext_server::is_del.eq(0))
+        .select((
+            tbl_ext_server::mt_server_type_id,
+            tbl_ext_server::ip,
+            tbl_ext_server::port,
+            tbl_ext_server::username,
+            tbl_ext_server::password,
+            tbl_ext_server::private_key,
+        ))
+        .first::<(i16, String, i16, String, Option<String>, Option<String>)>(conn)
+        .map_err(|_| common::error_message(StatusCode::NOT_FOUND, "information.notFound"))?;
 
-    // ❓ Pilih salah satu: password atau private key
-    let use_password = true;
-
-    // 🧲 Koneksi TCP
-    let tcp = TcpStream::connect(host)
+    let tcp = TcpStream::connect(format!("{}:{}", ip, port))
         .map_err(|_| common::error_message(StatusCode::BAD_REQUEST, "ssh.connectionFailed"))?;
 
     let mut session = Session::new().map_err(|_| {
@@ -50,31 +57,34 @@ pub async fn connect(
         common::error_message(StatusCode::INTERNAL_SERVER_ERROR, "ssh.handshakeFailed")
     })?;
 
-    // 🔐 Autentikasi
-    if use_password {
-        let password = "your_password";
+    if let Some(ref pwd) = password {
         session
-            .userauth_password(username, password)
+            .userauth_password(&username, pwd)
             .map_err(|_| common::error_message(StatusCode::UNAUTHORIZED, "ssh.authFailed"))?;
-    } else {
+    } else if let Some(ref key) = private_key {
         let mut temp_key = NamedTempFile::new().map_err(|_| {
             common::error_message(StatusCode::INTERNAL_SERVER_ERROR, "ssh.tempFileFailed")
         })?;
 
-        temp_key.write_all(private_key.as_bytes()).map_err(|_| {
+        temp_key.write_all(key.as_bytes()).map_err(|_| {
             common::error_message(StatusCode::INTERNAL_SERVER_ERROR, "ssh.writeKeyFailed")
         })?;
 
         let path: PathBuf = temp_key.path().into();
 
         session
-            .userauth_pubkey_file(username, None, &path, None)
+            .userauth_pubkey_file(&username, None, &path, None)
             .map_err(|_| common::error_message(StatusCode::UNAUTHORIZED, "ssh.authFailed"))?;
 
         // let private_key_path = Path::new("/path/to/id_rsa");
         // session
         //     .userauth_pubkey_file(username, None, private_key_path, None)
         //     .map_err(|_| common::error_message(StatusCode::UNAUTHORIZED, "ssh.authFailed"))?;
+    } else {
+        return Err(common::error_message(
+            StatusCode::UNAUTHORIZED,
+            "ssh.missingCredentials",
+        ));
     }
 
     if !session.authenticated() {
@@ -89,14 +99,30 @@ pub async fn connect(
         common::error_message(StatusCode::INTERNAL_SERVER_ERROR, "ssh.channelFailed")
     })?;
 
-    channel.exec("ls -la").map_err(|_| {
-        common::error_message(StatusCode::INTERNAL_SERVER_ERROR, "ssh.commandFailed")
-    })?;
+    if mt_server_type_id == 1 {
+        channel.exec("ls -la").map_err(|_| {
+            common::error_message(StatusCode::INTERNAL_SERVER_ERROR, "ssh.commandFailed")
+        })?;
+    } else if mt_server_type_id == 2 {
+        channel.exec("dir").map_err(|_| {
+            common::error_message(StatusCode::INTERNAL_SERVER_ERROR, "ssh.commandFailed")
+        })?;
+    } else {
+        return Err(common::error_message(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "ssh.unknownServerType",
+        ));
+    }
 
     let mut output = String::new();
     channel
         .read_to_string(&mut output)
         .map_err(|_| common::error_message(StatusCode::INTERNAL_SERVER_ERROR, "ssh.readFailed"))?;
+
+    // ✅ Cetak output baris per baris
+    for line in output.lines() {
+        println!("{}", line);
+    }
 
     channel.wait_close().ok();
 

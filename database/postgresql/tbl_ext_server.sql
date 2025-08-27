@@ -2,6 +2,7 @@ CREATE TABLE tbl_ext_server(
 	id SMALLINT PRIMARY KEY
 	, cd VARCHAR (20) NOT NULL
 	, dscp VARCHAR (500)
+	, mt_server_type_id SMALLINT NOT NULL
 	, ip VARCHAR (15) NOT NULL
 	, port SMALLINT DEFAULT(22)
 	, username VARCHAR (200) NOT NULL

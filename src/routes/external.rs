@@ -2,6 +2,7 @@ use crate::facades::external::api;
 use crate::facades::external::database;
 use crate::facades::external::database_query;
 use crate::facades::external::server;
+use crate::facades::external::server_command;
 
 use poem::{Route, get, post};
 
@@ -82,6 +83,7 @@ pub fn routes() -> Route {
                 .patch(server::update)
                 .delete(server::delete),
         )
+        .at("/:id/server-connect.json", get(server_command::connect))
         .at("/api.json", get(api::list).post(api::add))
         .at(
             "/:id/api.json",
