@@ -8,7 +8,7 @@ use crate::utils::common;
 use diesel::prelude::*;
 
 use poem::web::Query;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::json as json_marco;
 use ssh2::Session;
 
@@ -122,6 +122,13 @@ fn run_ssh_command(session: &Session, command: &str) -> Result<String, poem::Err
     Ok(output)
 }
 
+#[derive(Debug, Serialize)]
+pub struct PaginatedDirectoryResponse<T> {
+    pub total: i64,
+    pub data: Vec<T>,
+    pub directory: Vec<String>,
+}
+
 #[handler]
 pub async fn connect(
     pool: Data<&DbPool>,
@@ -178,6 +185,9 @@ pub async fn directory(
     Path(ext_server_id): Path<i16>,
     Query(pagination): Query<DirectoryPagination>,
 ) -> Result<impl IntoResponse> {
+    let start = pagination.start.unwrap_or(0);
+    let length = pagination.length.unwrap_or(10).min(100);
+
     let conn = &mut pool.get().map_err(|_| {
         common::error_message(
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -197,12 +207,37 @@ pub async fn directory(
 
     let command = match mt_server_type_id {
         1 => format!(
-            r#"cd "{}" && ls -A | while read f; do [ -e "$f" ] || continue; stat --format="%n|%s|%w|%y|%U|%A" "$f"; done"#,
+            r#"cd "{}" && ls -A | while read f; do [ -e "$f" ] || continue; stat --format="%n|%s|%w|%y|%U|%A|%F" "$f"; done"#,
             dir_path
         ),
         2 => format!(
-            r#"powershell -Command "Get-ChildItem -Path '{}' | ForEach-Object {{ '{{0}}|{{1}}|{{2}}|{{3}}|{{4}}|{{5}}' -f $_.Name, $_.Length, $_.CreationTimeUtc, $_.LastWriteTimeUtc, $_.Attributes, $_.Mode }}" "#,
-            dir_path
+            r#"powershell -Command "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8;{}""#,
+            format!(
+                r#"
+                    $search = "{}";
+                    $path = '{}';
+                    $items = Get-ChildItem -LiteralPath $path | Where-Object {{
+                        $search -eq "" -or $_.Name -and $_.Name.ToLower().Contains($search)
+                    }};
+                    $sorted = $items | Sort-Object {} {};
+                    Write-Output $sorted.Count;
+                    $sorted | Select-Object -Skip {} -First {} | ForEach-Object {{
+                        '{{0}}|{{1}}|{{2}}|{{3}}|{{4}}|{{5}}|{{6}}' -f $_.Name, $_.Length, $_.CreationTimeUtc, $_.LastWriteTimeUtc, $_.Attributes, $_.Mode, $_.PSIsContainer
+                    }}
+                "#,
+                pagination.search.as_deref().unwrap_or("").to_lowercase(),
+                dir_path,
+                match pagination.sort.as_deref() {
+                    Some("createdDate") => "CreationTimeUtc",
+                    _ => "Name",
+                },
+                match pagination.dir.as_deref() {
+                    Some("desc") => "-Descending",
+                    _ => "", // ascending (default), TIDAK pakai parameter
+                },
+                start,
+                length
+            ).replace('"', "\\\"").replace('\n', " ").replace('\r', "")
         ),
         _ => {
             return Err(common::error_message(
@@ -213,31 +248,117 @@ pub async fn directory(
     };
 
     let output = run_ssh_command(&session, &command)?;
-
-    let data = output
+    let mut data = output
         .lines()
         .filter_map(|line| {
             let parts: Vec<&str> = line.split('|').collect();
-            if parts.len() < 6 {
+            if parts.len() < 7 {
                 return None;
             }
 
-            let perms = parts[5];
+            if 1 == mt_server_type_id
+                && !pagination.search.as_deref().unwrap_or("").is_empty()
+                && !parts[0]
+                    .to_lowercase()
+                    .contains(&pagination.search.as_deref().unwrap_or("").to_lowercase())
+            {
+                None
+            } else {
+                let perms = parts[6];
 
-            Some(json_marco!({
-                "name": parts[0],
-                "size": parts[1].parse::<u64>().unwrap_or(0),
-                "created_date": parts[2],
-                "modified_date": parts[3],
-                "owner": parts[4],
-                "status": {
-                    "read": perms.contains("r"),
-                    "write": perms.contains("w"),
-                    "execute": perms.contains("x")
-                }
-            }))
+                let directory_flag = match mt_server_type_id {
+                    1 => {
+                        if parts[6].trim() == "directory" {
+                            1
+                        } else {
+                            0
+                        }
+                    }
+                    2 => {
+                        if parts[6].trim().to_lowercase() == "True" {
+                            1
+                        } else {
+                            0
+                        }
+                    }
+                    _ => 0,
+                };
+                Some(json_marco!({
+                    "name": parts[0],
+                    "directoryFlag" : directory_flag,
+                    "size": parts[1].parse::<u64>().unwrap_or(0),
+                    "created_date": parts[2],
+                    "modified_date": parts[3],
+                    "owner": parts[4],
+                    "status": {
+                        "read": perms.contains("r"),
+                        "write": perms.contains("w"),
+                        "execute": perms.contains("x")
+                    }
+                }))
+            }
         })
         .collect::<Vec<_>>();
+
+    let total = match mt_server_type_id {
+        1 => data.len() as i64,
+        2 => output
+            .lines()
+            .next()
+            .and_then(|first| first.trim().parse::<usize>().ok())
+            .unwrap_or(0) as i64,
+        _ => {
+            return Err(common::error_message(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "ssh.unknownServerType",
+            ));
+        }
+    };
+
+    data.sort_by(|a, b| {
+        let (a_val, b_val) = match pagination
+            .sort
+            .as_deref()
+            .unwrap_or("name")
+            .to_lowercase()
+            .as_str()
+        {
+            "createddate" => (
+                a.get("created_date").and_then(|v| v.as_str()),
+                b.get("created_date").and_then(|v| v.as_str()),
+            ),
+            _ => (
+                a.get("name").and_then(|v| v.as_str()),
+                b.get("name").and_then(|v| v.as_str()),
+            ),
+        };
+
+        match (a_val, b_val) {
+            (Some(a), Some(b)) => {
+                if pagination.dir.as_deref().unwrap_or("asc").to_lowercase() == "desc" {
+                    b.cmp(a)
+                } else {
+                    a.cmp(b)
+                }
+            }
+            _ => std::cmp::Ordering::Equal,
+        }
+    });
+
+    let paginated_data = match mt_server_type_id {
+        1 => data
+            .into_iter()
+            .skip(start as usize)
+            .take(length as usize)
+            .collect::<Vec<_>>(),
+        2 => data,
+        _ => {
+            return Err(common::error_message(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "ssh.unknownServerType",
+            ));
+        }
+    };
 
     let directory_parts: Vec<String> = dir_path
         .split('/')
@@ -245,8 +366,9 @@ pub async fn directory(
         .map(|s| s.to_string())
         .collect();
 
-    Ok(poem::web::Json(json_marco!({
-        "directory": directory_parts,
-        "data": data
-    })))
+    Ok(Json(PaginatedDirectoryResponse {
+        total: total,
+        data: paginated_data,
+        directory: directory_parts,
+    }))
 }
