@@ -212,32 +212,45 @@ pub async fn directory(
         ),
         2 => format!(
             r#"powershell -Command "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8;{}""#,
-            format!(
-                r#"
-                    $search = "{}";
-                    $path = '{}';
-                    $items = Get-ChildItem -LiteralPath $path | Where-Object {{
-                        $search -eq "" -or $_.Name -and $_.Name.ToLower().Contains($search)
-                    }};
-                    $sorted = $items | Sort-Object {} {};
-                    Write-Output $sorted.Count;
-                    $sorted | Select-Object -Skip {} -First {} | ForEach-Object {{
-                        '{{0}}|{{1}}|{{2}}|{{3}}|{{4}}|{{5}}|{{6}}' -f $_.Name, $_.Length, $_.CreationTimeUtc, $_.LastWriteTimeUtc, $_.Attributes, $_.Mode, $_.PSIsContainer
-                    }}
-                "#,
-                pagination.search.as_deref().unwrap_or("").to_lowercase(),
-                dir_path,
-                match pagination.sort.as_deref() {
-                    Some("createdDate") => "CreationTimeUtc",
-                    _ => "Name",
-                },
-                match pagination.dir.as_deref() {
-                    Some("desc") => "-Descending",
-                    _ => "", // ascending (default), TIDAK pakai parameter
-                },
-                start,
-                length
-            ).replace('"', "\\\"").replace('\n', " ").replace('\r', "")
+            if dir_path.len() > 0 {
+                format!(
+                    r#"
+                        $search = "{}";
+                        $path = '{}/';
+                        $items = Get-ChildItem -LiteralPath $path | Where-Object {{
+                            $search -eq "" -or $_.Name -and $_.Name.ToLower().Contains($search)
+                        }};
+                        $sorted = $items | Sort-Object {} {};
+                        Write-Output $sorted.Count;
+                        $sorted | Select-Object -Skip {} -First {} | ForEach-Object {{
+                            '{{0}}|{{1}}|{{2}}|{{3}}|{{4}}|{{5}}|{{6}}' -f $_.Name, $_.Length, $_.CreationTimeUtc, $_.LastWriteTimeUtc, $_.Attributes, $_.Mode, $_.PSIsContainer
+                        }}
+                    "#,
+                    pagination.search.as_deref().unwrap_or("").to_lowercase(),
+                    dir_path,
+                    match pagination.sort.as_deref() {
+                        Some("createdDate") => "CreationTimeUtc",
+                        _ => "Name",
+                    },
+                    match pagination.dir.as_deref() {
+                        Some("desc") => "-Descending",
+                        _ => "", // ascending (default), TIDAK pakai parameter
+                    },
+                    start,
+                    length
+                )
+            } else {
+                format!(
+                    r#"
+                        $drives = [System.IO.DriveInfo]::GetDrives() | Where-Object {{ $_.IsReady }};
+                        Write-Output $drives.Count;
+                        foreach ($drive in $drives) {{
+                            '{{0}}|{{1}}|{{2}}|{{3}}|Directory|d-----|-----' -f $drive.Name.TrimEnd('\'), $drive.TotalSize, $drive.RootDirectory.CreationTimeUtc, $drive.RootDirectory.LastWriteTimeUtc;
+                        }}
+                    "#
+                )
+            }
+            .replace('"', "\\\"").replace('\n', " ").replace('\r', "")
         ),
         _ => {
             return Err(common::error_message(
@@ -252,7 +265,8 @@ pub async fn directory(
         .lines()
         .filter_map(|line| {
             let parts: Vec<&str> = line.split('|').collect();
-            if parts.len() < 7 {
+
+            if parts.len() < 6 {
                 return None;
             }
 
@@ -268,14 +282,14 @@ pub async fn directory(
 
                 let directory_flag = match mt_server_type_id {
                     1 => {
-                        if parts[6].trim() == "directory" {
+                        if parts[4].trim() == "directory" {
                             1
                         } else {
                             0
                         }
                     }
                     2 => {
-                        if parts[6].trim().to_lowercase() == "True" {
+                        if parts[4].trim().to_lowercase() == "directory" {
                             1
                         } else {
                             0
