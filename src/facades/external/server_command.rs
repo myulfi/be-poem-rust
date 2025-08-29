@@ -30,11 +30,18 @@ struct DirectoryPagination {
     pub directory: String,
 }
 
-fn get_server_data(
+pub fn create_ssh_session(
     conn: &mut PgConnection,
     ext_server_id: i16,
-) -> Result<(i16, String, i16, String, Option<String>, Option<String>), poem::Error> {
-    tbl_ext_server::table
+) -> Result<(Session, i16), poem::Error> {
+    let (mt_server_type_id, ip, port, username, password, private_key): (
+        i16,
+        String,
+        i16,
+        String,
+        Option<String>,
+        Option<String>,
+    ) = tbl_ext_server::table
         .filter(tbl_ext_server::id.eq(ext_server_id))
         .filter(tbl_ext_server::is_del.eq(0))
         .select((
@@ -46,16 +53,8 @@ fn get_server_data(
             tbl_ext_server::private_key,
         ))
         .first::<(i16, String, i16, String, Option<String>, Option<String>)>(conn)
-        .map_err(|_| common::error_message(StatusCode::NOT_FOUND, "information.notFound"))
-}
+        .map_err(|_| common::error_message(StatusCode::NOT_FOUND, "information.notFound"))?;
 
-fn create_ssh_session(
-    ip: &str,
-    port: i16,
-    username: &str,
-    password: &Option<String>,
-    private_key: &Option<String>,
-) -> Result<Session, poem::Error> {
     let tcp = TcpStream::connect(format!("{}:{}", ip, port))
         .map_err(|_| common::error_message(StatusCode::BAD_REQUEST, "ssh.connectionFailed"))?;
 
@@ -70,7 +69,7 @@ fn create_ssh_session(
 
     if let Some(pwd) = password {
         session
-            .userauth_password(username, pwd)
+            .userauth_password(&username, &pwd)
             .map_err(|_| common::error_message(StatusCode::UNAUTHORIZED, "ssh.authFailed"))?;
     } else if let Some(key) = private_key {
         let mut temp_key = NamedTempFile::new().map_err(|_| {
@@ -81,7 +80,7 @@ fn create_ssh_session(
         })?;
 
         session
-            .userauth_pubkey_file(username, None, &temp_key.path(), None)
+            .userauth_pubkey_file(&username, None, &temp_key.path(), None)
             .map_err(|_| common::error_message(StatusCode::UNAUTHORIZED, "ssh.authFailed"))?;
 
         // let private_key_path = Path::new("/path/to/id_rsa");
@@ -102,7 +101,7 @@ fn create_ssh_session(
         ));
     }
 
-    Ok(session)
+    Ok((session, mt_server_type_id))
 }
 
 fn run_ssh_command(session: &Session, command: &str) -> Result<String, poem::Error> {
@@ -142,11 +141,7 @@ pub async fn connect(
         )
     })?;
 
-    let (mt_server_type_id, ip, port, username, password, private_key) =
-        get_server_data(conn, ext_server_id)?;
-
-    let session = create_ssh_session(&ip, port, &username, &password, &private_key)?;
-
+    let (session, mt_server_type_id) = create_ssh_session(conn, ext_server_id)?;
     let command = match mt_server_type_id {
         1 => "pwd",
         2 => "cd",
@@ -195,10 +190,7 @@ pub async fn directory(
         )
     })?;
 
-    let (mt_server_type_id, ip, port, username, password, private_key) =
-        get_server_data(conn, ext_server_id)?;
-
-    let session = create_ssh_session(&ip, port, &username, &password, &private_key)?;
+    let (session, mt_server_type_id) = create_ssh_session(conn, ext_server_id)?;
 
     let mut dir_path = pagination.directory.trim().to_string();
     if mt_server_type_id == 1 && !dir_path.starts_with('/') {
@@ -207,7 +199,7 @@ pub async fn directory(
 
     let command = match mt_server_type_id {
         1 => format!(
-            r#"cd "{}" && ls -A | while read f; do [ -e "$f" ] || continue; stat --format="%n|%s|%w|%y|%U|%A|%F" "$f"; done"#,
+            r#"cd "{}" && ls -A | while read f; do [ -e "$f" ] || continue; stat --format="%n|%s|%w|%y|%F|%A|%U" "$f"; done"#,
             dir_path
         ),
         2 => format!(
@@ -261,6 +253,7 @@ pub async fn directory(
     };
 
     let output = run_ssh_command(&session, &command)?;
+    // println!("{}", output);
     let mut data = output
         .lines()
         .filter_map(|line| {

@@ -44,6 +44,12 @@
 //     Ok(StatusCode::NO_CONTENT)
 // }
 
+use std::io::copy;
+use std::net::TcpListener;
+use std::sync::{Arc, Mutex};
+use std::thread;
+use std::time::Duration;
+
 use diesel::prelude::*;
 use diesel::{ExpressionMethods, PgConnection};
 use poem::web::{Json, Query};
@@ -52,8 +58,10 @@ use sqlx::mysql::MySqlPoolOptions;
 use sqlx::postgres::PgPoolOptions;
 use sqlx::{Column, Pool, Row};
 use sqlx::{MySql, Postgres};
+use ssh2::Session;
 
 use crate::database_pool::DatabasePool;
+use crate::facades::external::server_command::create_ssh_session;
 use crate::models::common::{
     DataResponse, LoadedMoreResponse, PaginatedLoadedMoreResponse, PaginatedResponse, Pagination,
 };
@@ -72,71 +80,6 @@ use crate::{
     utils::common,
 };
 use serde_json::{Value, json};
-
-fn get_ext_database_info(
-    conn: &mut PgConnection,
-    ext_database_id: i16,
-) -> poem::Result<(String, i16, String)> {
-    let (username, password, db_connection, mt_database_type_id, is_use_page): (
-        String,
-        String,
-        String,
-        i16,
-        i16,
-    ) = tbl_ext_database::table
-        .filter(tbl_ext_database::id.eq(ext_database_id))
-        .filter(tbl_ext_database::is_del.eq(0))
-        .select((
-            tbl_ext_database::username,
-            tbl_ext_database::password,
-            tbl_ext_database::db_connection,
-            tbl_ext_database::mt_database_type_id,
-            tbl_ext_database::is_use_page,
-        ))
-        .first::<(String, String, String, i16, i16)>(conn)
-        .map_err(|_| common::error_message(StatusCode::NOT_FOUND, "information.notFound"))?;
-
-    let (url, pagination): (String, String) = tbl_mt_database_type::table
-        .filter(tbl_mt_database_type::id.eq(mt_database_type_id))
-        .select((tbl_mt_database_type::url, tbl_mt_database_type::pagination))
-        .first::<(String, String)>(conn)
-        .map_err(|_| common::error_message(StatusCode::NOT_FOUND, "information.notFound"))?;
-
-    // let url = format!("postgres://{0}:{1}@{2}", usr, password, db_connection)
-    let url = url
-        .replace("{0}", &username)
-        .replace("{1}", &encode_special_chars(&password))
-        .replace("{2}", &db_connection);
-
-    Ok((url, is_use_page, pagination))
-}
-
-async fn connect_to_external_database(connection_str: &str) -> poem::Result<DatabasePool> {
-    if connection_str.starts_with("postgres://") {
-        let pool = PgPoolOptions::new()
-            .max_connections(5)
-            .connect(connection_str)
-            .await
-            .map_err(|e| {
-                eprintln!("PostgreSQL connection error: {}", e);
-                poem::Error::from_status(StatusCode::INTERNAL_SERVER_ERROR)
-            })?;
-        Ok(DatabasePool::Postgres(pool))
-    } else if connection_str.starts_with("mysql://") {
-        let pool = MySqlPoolOptions::new()
-            .max_connections(5)
-            .connect(connection_str)
-            .await
-            .map_err(|e| {
-                eprintln!("MySQL connection error: {}", e);
-                poem::Error::from_status(StatusCode::INTERNAL_SERVER_ERROR)
-            })?;
-        Ok(DatabasePool::MySql(pool))
-    } else {
-        eprintln!("Unsupported database URL scheme: {}", connection_str);
-        Err(poem::Error::from_status(StatusCode::BAD_REQUEST))
-    }
-}
 
 fn get_manual_query(conn: &mut PgConnection, query_manual_id: i64) -> poem::Result<(i16, String)> {
     tbl_query_manual::table
@@ -218,9 +161,156 @@ async fn get_external_pool(
     conn: &mut PgConnection,
     ext_database_id: i16,
 ) -> poem::Result<(DatabasePool, i16, String)> {
-    let (url, is_use_page, pagination) = get_ext_database_info(conn, ext_database_id)?;
-    let pool = connect_to_external_database(&url).await?;
+    let (ext_server_id, ip, port, username, password, db_name, mt_database_type_id, is_use_page): (
+        i16,
+        String,
+        i16,
+        String,
+        String,
+        String,
+        i16,
+        i16,
+    ) = tbl_ext_database::table
+        .filter(tbl_ext_database::id.eq(ext_database_id))
+        .filter(tbl_ext_database::is_del.eq(0))
+        .select((
+            tbl_ext_database::ext_server_id,
+            tbl_ext_database::ip,
+            tbl_ext_database::port,
+            tbl_ext_database::username,
+            tbl_ext_database::password,
+            tbl_ext_database::db_name,
+            tbl_ext_database::mt_database_type_id,
+            tbl_ext_database::is_use_page,
+        ))
+        .first::<(i16, String, i16, String, String, String, i16, i16)>(conn)
+        .map_err(|_| common::error_message(StatusCode::NOT_FOUND, "information.notFound"))?;
+
+    let (url, pagination): (String, String) = tbl_mt_database_type::table
+        .filter(tbl_mt_database_type::id.eq(mt_database_type_id))
+        .select((tbl_mt_database_type::url, tbl_mt_database_type::pagination))
+        .first::<(String, String)>(conn)
+        .map_err(|_| common::error_message(StatusCode::NOT_FOUND, "information.notFound"))?;
+
+    let target_ip: &str;
+    let target_port: u16;
+
+    if ext_server_id > 0 {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").map_err(|e| {
+            eprintln!("Failed to bind local port: {}", e);
+            poem::Error::from_status(StatusCode::INTERNAL_SERVER_ERROR)
+        })?;
+
+        let local_port = listener
+            .local_addr()
+            .map_err(|e| {
+                eprintln!("Failed to get local address: {}", e);
+                poem::Error::from_status(StatusCode::INTERNAL_SERVER_ERROR)
+            })?
+            .port();
+
+        let (session, _) = create_ssh_session(conn, ext_server_id)?;
+        start_ssh_tunnel(listener, session, ip.clone(), port as u16);
+        target_ip = "localhost";
+        target_port = local_port;
+        //buatkan ssh tunnel menggunakan ssh2
+        thread::sleep(Duration::from_millis(300));
+    } else {
+        target_ip = &ip;
+        target_port = port as u16;
+    }
+
+    let url = url
+        .replace("{0}", &username)
+        .replace("{1}", &encode_special_chars(&password))
+        // .replace("{2}", &db_connection);
+        .replace("{2}", target_ip)
+        .replace("{3}", &target_port.to_string())
+        .replace("{4}", &db_name);
+    println!("DB connection string : {}", url);
+
+    let pool = match mt_database_type_id {
+        1 => {
+            let pool = PgPoolOptions::new()
+                .max_connections(5)
+                .connect(&url)
+                .await
+                .map_err(|e| {
+                    eprintln!("PostgreSQL connection error: {}", e);
+                    poem::Error::from_status(StatusCode::INTERNAL_SERVER_ERROR)
+                })?;
+            DatabasePool::Postgres(pool)
+        }
+        2 => {
+            let pool = MySqlPoolOptions::new()
+                .max_connections(5)
+                .connect(&url)
+                .await
+                .map_err(|e| {
+                    eprintln!("MySQL connection error: {}", e);
+                    poem::Error::from_status(StatusCode::INTERNAL_SERVER_ERROR)
+                })?;
+            DatabasePool::MySql(pool)
+        }
+        _ => {
+            eprintln!("Unsupported database type ID: {}", mt_database_type_id);
+            return Err(poem::Error::from_status(StatusCode::BAD_REQUEST));
+        }
+    };
+
     Ok((pool, is_use_page, pagination))
+}
+
+fn start_ssh_tunnel(
+    listener: TcpListener,
+    session: Session,
+    remote_host: String,
+    remote_port: u16,
+) {
+    let session = std::sync::Arc::new(session);
+
+    thread::spawn(move || {
+        for stream in listener.incoming() {
+            match stream {
+                Ok(mut local_stream) => {
+                    println!(
+                        "localhost:{} → {}:{}",
+                        local_stream
+                            // .peer_addr()
+                            .local_addr()
+                            .map(|addr| addr.port())
+                            .unwrap_or(0),
+                        remote_host,
+                        remote_port
+                    );
+                    let session = session.clone();
+                    let remote_host = remote_host.clone();
+
+                    thread::spawn(move || {
+                        let mut remote_channel =
+                            match session.channel_direct_tcpip(&remote_host, remote_port, None) {
+                                Ok(channel) => channel,
+                                Err(e) => {
+                                    eprintln!("Failed to open SSH channel: {:?}", e);
+                                    return;
+                                }
+                            };
+
+                        let mut local_stream_clone = local_stream
+                            .try_clone()
+                            .expect("Failed to clone local stream");
+
+                        // copy data dua arah secara blocking bergantian (bisa blocking satu arah dulu, lalu yang lain)
+                        let _ = std::io::copy(&mut local_stream_clone, &mut remote_channel);
+                        let _ = std::io::copy(&mut remote_channel, &mut local_stream);
+                    });
+                }
+                Err(e) => {
+                    eprintln!("Listener error: {:?}", e);
+                }
+            }
+        }
+    });
 }
 
 pub async fn query_with_pagination(

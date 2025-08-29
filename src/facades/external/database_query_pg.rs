@@ -30,18 +30,26 @@ fn get_ext_database_info(
     conn: &mut PgConnection,
     ext_database_id: i16,
 ) -> poem::Result<(String, String)> {
-    let (username, password, db_connection, mt_database_type_id): (String, String, String, i16) =
-        tbl_ext_database::table
-            .filter(tbl_ext_database::id.eq(ext_database_id))
-            .filter(tbl_ext_database::is_del.eq(0))
-            .select((
-                tbl_ext_database::username,
-                tbl_ext_database::password,
-                tbl_ext_database::db_connection,
-                tbl_ext_database::mt_database_type_id,
-            ))
-            .first::<(String, String, String, i16)>(conn)
-            .map_err(|_| common::error_message(StatusCode::NOT_FOUND, "information.notFound"))?;
+    let (ip, port, username, password, db_name, mt_database_type_id): (
+        String,
+        i16,
+        String,
+        String,
+        String,
+        i16,
+    ) = tbl_ext_database::table
+        .filter(tbl_ext_database::id.eq(ext_database_id))
+        .filter(tbl_ext_database::is_del.eq(0))
+        .select((
+            tbl_ext_database::ip,
+            tbl_ext_database::port,
+            tbl_ext_database::username,
+            tbl_ext_database::password,
+            tbl_ext_database::db_name,
+            tbl_ext_database::mt_database_type_id,
+        ))
+        .first::<(String, i16, String, String, String, i16)>(conn)
+        .map_err(|_| common::error_message(StatusCode::NOT_FOUND, "information.notFound"))?;
 
     let (url, pagination): (String, String) = tbl_mt_database_type::table
         .filter(tbl_mt_database_type::id.eq(mt_database_type_id))
@@ -53,7 +61,9 @@ fn get_ext_database_info(
     let url = url
         .replace("{0}", &username)
         .replace("{1}", &password)
-        .replace("{2}", &db_connection);
+        .replace("{2}", &ip)
+        .replace("{3}", &port.to_string())
+        .replace("{4}", &db_name);
 
     Ok((url, pagination))
 }

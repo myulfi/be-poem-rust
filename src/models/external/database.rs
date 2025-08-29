@@ -16,10 +16,14 @@ pub struct ExternalDatabase {
     pub ext_server_id: i16,
     #[serde(rename = "databaseTypeId")]
     pub mt_database_type_id: i16,
+    pub ip: String,
+    pub port: i16,
     pub username: String,
     pub password: String,
-    #[serde(rename = "databaseConnection")]
-    pub db_connection: String,
+    #[serde(rename = "databaseName")]
+    pub db_name: String,
+    // #[serde(rename = "databaseConnection")]
+    // pub db_connection: String,
     #[serde(rename = "usePageFlag")]
     pub is_use_page: i16,
     #[serde(rename = "lockFlag")]
@@ -54,13 +58,18 @@ pub struct EntryExternalDatabase {
     #[serde(rename = "databaseTypeId")]
     #[validate(range(min = 1, message = "Type must be filled"))]
     pub mt_database_type_id: i16,
+    pub ip: String,
+    pub port: i16,
     #[validate(length(min = 1, message = "Username must be filled"))]
     pub username: String,
     #[validate(length(min = 1, message = "Password must be filled"))]
     pub password: String,
-    #[serde(rename = "databaseConnection")]
-    #[validate(length(min = 1, message = "Database connection must be filled"))]
-    pub db_connection: String,
+    #[serde(rename = "databaseName")]
+    #[validate(length(min = 1, message = "DB Name must be filled"))]
+    pub db_name: String,
+    // #[serde(rename = "databaseConnection")]
+    // #[validate(length(min = 1, message = "Database connection must be filled"))]
+    // pub db_connection: String,
     #[serde(rename = "usePageFlag")]
     pub is_use_page: i16,
     #[serde(rename = "lockFlag")]
