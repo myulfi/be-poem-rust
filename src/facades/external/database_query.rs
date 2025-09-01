@@ -1,54 +1,4 @@
-// async fn get_external_client(// conn: &mut PgConnection,
-//     // ext_database_id: i16,
-// ) -> poem::Result<(Client, String)> {
-//     // Step 1: Bind listener ke port acak
-//     let listener = TcpListener::bind("127.0.0.1:0").await?;
-//     let local_addr = listener.local_addr()?;
-//     let local_port = local_addr.port();
-//     drop(listener); // Kita tidak perlu listener-nya, hanya port-nya
-
-//     println!("Menggunakan local port: {}", local_port);
-
-//     // Step 2: Buat SSH session
-//     let ssh = Session::connect("user@remote-host", openssh::KnownHosts::Strict).await?;
-
-//     // Step 3: Forward port remote ke port lokal yang dipilih
-//     let _tunnel = ssh
-//         .forward_remote_port(local_port, "127.0.0.1:3306")
-//         .await?;
-
-//     // Step 4: Koneksi ke DB via sqlx
-
-//     let db_url = "mysql://root:%40Master87%23%21123@103.118.99.182:3306/master";
-//     let pool = PgPool::connect(&db_url).await?;
-
-//     let row: (i64,) = sqlx::query_as("SELECT 1").fetch_one(&pool).await?;
-
-//     println!("Hasil query: {}", row.0);
-// }
-
-// #[handler]
-// pub async fn connect(
-//     pool: poem::web::Data<&DbPool>,
-//     _: crate::auth::middleware::JwtAuth,
-//     Path(ext_database_id): Path<i16>,
-// ) -> poem::Result<impl IntoResponse> {
-//     let conn = &mut pool.get().map_err(|_| {
-//         common::error_message(
-//             StatusCode::INTERNAL_SERVER_ERROR,
-//             "information.connectionFailed",
-//         )
-//     })?;
-
-//     let _ = get_external_client().await?;
-//     Ok(StatusCode::NO_CONTENT)
-// }
-
-use std::io::copy;
-use std::net::TcpListener;
-use std::sync::{Arc, Mutex};
-use std::thread;
-use std::time::Duration;
+use std::process::{Child, Command};
 
 use diesel::prelude::*;
 use diesel::{ExpressionMethods, PgConnection};
@@ -58,10 +8,9 @@ use sqlx::mysql::MySqlPoolOptions;
 use sqlx::postgres::PgPoolOptions;
 use sqlx::{Column, Pool, Row};
 use sqlx::{MySql, Postgres};
-use ssh2::Session;
 
 use crate::database_pool::DatabasePool;
-use crate::facades::external::server_command::create_ssh_session;
+use crate::facades::external::server_command::start_ssh_tunnel;
 use crate::models::common::{
     DataResponse, LoadedMoreResponse, PaginatedLoadedMoreResponse, PaginatedResponse, Pagination,
 };
@@ -94,7 +43,9 @@ async fn get_query_manual_pool(
     query_manual_id: i64,
 ) -> poem::Result<(DatabasePool, String, i16, String)> {
     let (ext_database_id, query_string) = get_manual_query(conn, query_manual_id)?;
-    let (pool, is_use_page, pagination) = get_external_pool(conn, ext_database_id).await?;
+    let (pool, mut tunnel, is_use_page, pagination) =
+        get_external_pool(conn, ext_database_id).await?;
+    tunnel.kill().ok();
     Ok((pool, query_string, is_use_page, pagination))
 }
 
@@ -160,7 +111,7 @@ async fn get_query_manual_row(
 async fn get_external_pool(
     conn: &mut PgConnection,
     ext_database_id: i16,
-) -> poem::Result<(DatabasePool, i16, String)> {
+) -> poem::Result<(DatabasePool, Child, i16, String)> {
     let (ext_server_id, ip, port, username, password, db_name, mt_database_type_id, is_use_page): (
         i16,
         String,
@@ -192,39 +143,22 @@ async fn get_external_pool(
         .first::<(String, String)>(conn)
         .map_err(|_| common::error_message(StatusCode::NOT_FOUND, "information.notFound"))?;
 
-    let target_ip: &str;
-    let target_port: u16;
-
-    if ext_server_id > 0 {
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").map_err(|e| {
-            eprintln!("Failed to bind local port: {}", e);
-            poem::Error::from_status(StatusCode::INTERNAL_SERVER_ERROR)
-        })?;
-
-        let local_port = listener
-            .local_addr()
-            .map_err(|e| {
-                eprintln!("Failed to get local address: {}", e);
-                poem::Error::from_status(StatusCode::INTERNAL_SERVER_ERROR)
-            })?
-            .port();
-
-        let (session, _) = create_ssh_session(conn, ext_server_id)?;
-        start_ssh_tunnel(listener, session, ip.clone(), port as u16);
-        target_ip = "localhost";
-        target_port = local_port;
-        //buatkan ssh tunnel menggunakan ssh2
-        thread::sleep(Duration::from_millis(300));
+    let (mut tunnel, target_ip, target_port): (Child, String, u16) = if ext_server_id > 0 {
+        let (tunnel_process, local_port) = start_ssh_tunnel(conn, ext_server_id, &ip, port)?;
+        (tunnel_process, "localhost".into(), local_port)
     } else {
-        target_ip = &ip;
-        target_port = port as u16;
-    }
+        let dummy_child = Command::new("true").spawn().map_err(|e| {
+            eprintln!("Failed to create dummy child: {}", e);
+            common::error_message(StatusCode::INTERNAL_SERVER_ERROR, "ssh.dummyChildFailed")
+        })?;
+        (dummy_child, ip.clone(), port as u16)
+    };
 
     let url = url
         .replace("{0}", &username)
         .replace("{1}", &encode_special_chars(&password))
         // .replace("{2}", &db_connection);
-        .replace("{2}", target_ip)
+        .replace("{2}", &target_ip)
         .replace("{3}", &target_port.to_string())
         .replace("{4}", &db_name);
     println!("DB connection string : {}", url);
@@ -258,59 +192,7 @@ async fn get_external_pool(
         }
     };
 
-    Ok((pool, is_use_page, pagination))
-}
-
-fn start_ssh_tunnel(
-    listener: TcpListener,
-    session: Session,
-    remote_host: String,
-    remote_port: u16,
-) {
-    let session = std::sync::Arc::new(session);
-
-    thread::spawn(move || {
-        for stream in listener.incoming() {
-            match stream {
-                Ok(mut local_stream) => {
-                    println!(
-                        "localhost:{} → {}:{}",
-                        local_stream
-                            // .peer_addr()
-                            .local_addr()
-                            .map(|addr| addr.port())
-                            .unwrap_or(0),
-                        remote_host,
-                        remote_port
-                    );
-                    let session = session.clone();
-                    let remote_host = remote_host.clone();
-
-                    thread::spawn(move || {
-                        let mut remote_channel =
-                            match session.channel_direct_tcpip(&remote_host, remote_port, None) {
-                                Ok(channel) => channel,
-                                Err(e) => {
-                                    eprintln!("Failed to open SSH channel: {:?}", e);
-                                    return;
-                                }
-                            };
-
-                        let mut local_stream_clone = local_stream
-                            .try_clone()
-                            .expect("Failed to clone local stream");
-
-                        // copy data dua arah secara blocking bergantian (bisa blocking satu arah dulu, lalu yang lain)
-                        let _ = std::io::copy(&mut local_stream_clone, &mut remote_channel);
-                        let _ = std::io::copy(&mut remote_channel, &mut local_stream);
-                    });
-                }
-                Err(e) => {
-                    eprintln!("Listener error: {:?}", e);
-                }
-            }
-        }
-    });
+    Ok((pool, tunnel, is_use_page, pagination))
 }
 
 pub async fn query_with_pagination(
@@ -320,8 +202,9 @@ pub async fn query_with_pagination(
     start: i64,
     length: i64,
 ) -> poem::Result<PaginatedLoadedMoreResponse<Value>> {
-    let (ext_pool, is_use_page, pagination) = get_external_pool(conn, ext_database_id).await?;
-    match ext_pool {
+    let (ext_pool, mut tunnel, is_use_page, pagination) =
+        get_external_pool(conn, ext_database_id).await?;
+    let respone = match ext_pool {
         DatabasePool::Postgres(ref pg_pool) => {
             query_with_pagination_postgres(pg_pool, &pagination, query, is_use_page, start, length)
                 .await
@@ -330,7 +213,9 @@ pub async fn query_with_pagination(
             query_with_pagination_mysql(my_pool, &pagination, query, is_use_page, start, length)
                 .await
         }
-    }
+    };
+    tunnel.kill().ok();
+    respone
 }
 
 async fn query_with_pagination_postgres(
@@ -454,7 +339,7 @@ async fn run_and_extract_columns(
     ext_database_id: i16,
     raw_query: &str,
 ) -> poem::Result<Vec<serde_json::Value>> {
-    let (ext_pool, _, pagination) = get_external_pool(conn, ext_database_id).await?;
+    let (ext_pool, mut tunnel, _, pagination) = get_external_pool(conn, ext_database_id).await?;
 
     let query = pagination
         .replace("{0}", raw_query)
@@ -477,6 +362,7 @@ async fn run_and_extract_columns(
             extract_columns_info_mysql(&rows)
         }
     };
+    tunnel.kill().ok();
 
     Ok(columns_info)
 }
@@ -506,8 +392,8 @@ pub async fn connect(
         )
     })?;
 
-    let (_, is_use_page, _) = get_external_pool(conn, ext_database_id).await?;
-
+    let (_, mut tunnel, is_use_page, _) = get_external_pool(conn, ext_database_id).await?;
+    tunnel.kill().ok();
     Ok(Json(DataResponse {
         data: json!({ "usePageFlag": is_use_page}),
     }))
@@ -529,7 +415,7 @@ pub async fn query_object_list(
         )
     })?;
 
-    let (ext_pool, _, pagination) = get_external_pool(conn, ext_database_id).await?;
+    let (ext_pool, mut tunnel, _, pagination) = get_external_pool(conn, ext_database_id).await?;
 
     let response = match ext_pool {
         DatabasePool::Postgres(ref pg_pool) => {
@@ -603,6 +489,7 @@ pub async fn query_object_list(
             query_with_pagination_mysql(my_pool, &pagination, query, 1, start, length).await?
         }
     };
+    tunnel.kill().ok();
 
     Ok(Json(response))
 }
@@ -693,7 +580,7 @@ pub async fn query_manual_run(
         )
     })?;
 
-    let (ext_pool, _, pagination) = get_external_pool(conn, ext_database_id).await?;
+    let (ext_pool, mut tunnel, _, pagination) = get_external_pool(conn, ext_database_id).await?;
 
     let mut success_response: Option<Value> = None;
     let mut results: Vec<Value> = Vec::new();
@@ -831,6 +718,8 @@ pub async fn query_manual_run(
             }
         }
     }
+
+    tunnel.kill().ok();
 
     if let (Some(last_name_val), Some(last_action_val), Some(last_query_val)) =
         (&last_name, &last_action, &last_query)

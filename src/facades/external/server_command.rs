@@ -1,5 +1,9 @@
 use std::io::{Read, Write};
 use std::net::TcpStream;
+use std::path::Path as StdPath;
+use std::process::{Child, Command};
+use std::thread;
+use std::time::Duration;
 
 use crate::db::DbPool;
 use crate::models::common::DataResponse;
@@ -30,7 +34,7 @@ struct DirectoryPagination {
     pub directory: String,
 }
 
-pub fn create_ssh_session(
+fn create_ssh_session(
     conn: &mut PgConnection,
     ext_server_id: i16,
 ) -> Result<(Session, i16), poem::Error> {
@@ -102,6 +106,102 @@ pub fn create_ssh_session(
     }
 
     Ok((session, mt_server_type_id))
+}
+
+pub fn start_ssh_tunnel(
+    conn: &mut PgConnection,
+    ext_server_id: i16,
+    remote_host: &str,
+    remote_port: i16,
+) -> Result<(Child, u16), poem::Error> {
+    let (ip, port, username, password, private_key): (
+        String,
+        i16,
+        String,
+        Option<String>,
+        Option<String>,
+    ) = tbl_ext_server::table
+        .filter(tbl_ext_server::id.eq(ext_server_id))
+        .filter(tbl_ext_server::is_del.eq(0))
+        .select((
+            tbl_ext_server::ip,
+            tbl_ext_server::port,
+            tbl_ext_server::username,
+            tbl_ext_server::password,
+            tbl_ext_server::private_key,
+        ))
+        .first::<(String, i16, String, Option<String>, Option<String>)>(conn)
+        .map_err(|_| common::error_message(StatusCode::NOT_FOUND, "information.notFound"))?;
+
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").map_err(|e| {
+        eprintln!("Failed to bind local port: {}", e);
+        poem::Error::from_status(StatusCode::INTERNAL_SERVER_ERROR)
+    })?;
+
+    let local_port = listener
+        .local_addr()
+        .map_err(|e| {
+            eprintln!("Failed to get local address: {}", e);
+            poem::Error::from_status(StatusCode::INTERNAL_SERVER_ERROR)
+        })?
+        .port();
+    drop(listener);
+
+    let (key_path, _temp_file): (Box<StdPath>, Option<NamedTempFile>) = if let Some(pwd) = password
+    {
+        let mut temp_file = NamedTempFile::new().map_err(|_| {
+            common::error_message(StatusCode::INTERNAL_SERVER_ERROR, "ssh.tempFileFailed")
+        })?;
+
+        temp_file.write_all(pwd.as_bytes()).map_err(|_| {
+            common::error_message(StatusCode::INTERNAL_SERVER_ERROR, "ssh.writeKeyFailed")
+        })?;
+
+        // Keep temp_file alive so it's not deleted immediately
+        (Box::from(temp_file.path()), Some(temp_file))
+    } else if let Some(key) = private_key {
+        let mut temp_file = NamedTempFile::new().map_err(|_| {
+            common::error_message(StatusCode::INTERNAL_SERVER_ERROR, "ssh.tempFileFailed")
+        })?;
+
+        temp_file.write_all(key.as_bytes()).map_err(|_| {
+            common::error_message(StatusCode::INTERNAL_SERVER_ERROR, "ssh.writeKeyFailed")
+        })?;
+
+        (Box::from(temp_file.path()), Some(temp_file))
+    } else {
+        return Err(common::error_message(
+            StatusCode::UNAUTHORIZED,
+            "ssh.missingCredentials",
+        ));
+    };
+
+    let mut child = Command::new("ssh")
+        .args([
+            "-N",
+            "-L",
+            &format!("{}:{}:{}", local_port, remote_host, remote_port),
+            "-p",
+            &port.to_string(),
+            "-i",
+            key_path.to_str().ok_or_else(|| {
+                common::error_message(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "ssh.invalidCredentialPath",
+                )
+            })?,
+            &format!("{}@{}", username, ip),
+        ])
+        .spawn()
+        .map_err(|e| {
+            eprintln!("Failed to start SSH tunnel: {}", e);
+            common::error_message(StatusCode::INTERNAL_SERVER_ERROR, "ssh.tunnelFailed")
+        })?;
+
+    // Tunggu beberapa saat agar tunnel siap
+    thread::sleep(Duration::from_secs(2));
+
+    Ok((child, local_port))
 }
 
 fn run_ssh_command(session: &Session, command: &str) -> Result<String, poem::Error> {
