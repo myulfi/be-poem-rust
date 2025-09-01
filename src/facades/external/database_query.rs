@@ -143,7 +143,7 @@ async fn get_external_pool(
         .first::<(String, String)>(conn)
         .map_err(|_| common::error_message(StatusCode::NOT_FOUND, "information.notFound"))?;
 
-    let (mut tunnel, target_ip, target_port): (Child, String, u16) = if ext_server_id > 0 {
+    let (tunnel, target_ip, target_port): (Child, String, u16) = if ext_server_id > 0 {
         let (tunnel_process, local_port) = start_ssh_tunnel(conn, ext_server_id, &ip, port)?;
         (tunnel_process, "localhost".into(), local_port)
     } else {

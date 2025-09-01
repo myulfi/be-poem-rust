@@ -176,7 +176,7 @@ pub fn start_ssh_tunnel(
         ));
     };
 
-    let mut child = Command::new("ssh")
+    let child = Command::new("ssh")
         .args([
             "-N",
             "-L",
