@@ -333,12 +333,13 @@ pub async fn directory(
                     pagination.search.as_deref().unwrap_or("").to_lowercase(),
                     dir_path,
                     match pagination.sort.as_deref() {
-                        Some("createdDate") => "CreationTimeUtc",
+                        Some("modified_date") => "LastWriteTimeUtc",
+                        Some("size") => "Length",
                         _ => "Name",
                     },
                     match pagination.dir.as_deref() {
                         Some("desc") => "-Descending",
-                        _ => "", // ascending (default), TIDAK pakai parameter
+                        _ => "",
                     },
                     start,
                     length
