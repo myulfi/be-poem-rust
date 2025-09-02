@@ -177,7 +177,7 @@ pub fn start_ssh_tunnel(
             .map_err(|e| {
                 eprintln!("Failed to start SSH tunnel (password): {}", e);
                 common::error_message(StatusCode::INTERNAL_SERVER_ERROR, "ssh.tunnelFailed")
-            })?
+            })?;
     } else if let Some(key) = private_key {
         temp_file.write_all(key.as_bytes()).map_err(|_| {
             common::error_message(StatusCode::INTERNAL_SERVER_ERROR, "ssh.writeKeyFailed")
@@ -213,7 +213,6 @@ pub fn start_ssh_tunnel(
 
     // println!("Temp file path: {:?}", temp_file.path());
     thread::sleep(Duration::from_millis(2000));
-
     Ok((child, local_port))
 }
 
@@ -366,129 +365,141 @@ pub async fn directory(
     };
 
     let output = run_ssh_command(&session, &command)?;
-    // println!("{}", output);
-    let mut data = output
-        .lines()
-        .filter_map(|line| {
-            let parts: Vec<&str> = line.split('|').collect();
-
-            if parts.len() < 6 {
-                return None;
-            }
-
-            if 1 == mt_server_type_id
-                && !pagination.search.as_deref().unwrap_or("").is_empty()
-                && !parts[0]
-                    .to_lowercase()
-                    .contains(&pagination.search.as_deref().unwrap_or("").to_lowercase())
-            {
-                None
-            } else {
-                let perms = parts[6];
-
-                let directory_flag = match mt_server_type_id {
-                    1 => {
-                        if parts[4].trim() == "directory" {
-                            1
-                        } else {
-                            0
-                        }
-                    }
-                    2 => {
-                        if parts[4].trim().to_lowercase() == "directory" {
-                            1
-                        } else {
-                            0
-                        }
-                    }
-                    _ => 0,
-                };
-                Some(json_marco!({
-                    "name": parts[0],
-                    "directoryFlag" : directory_flag,
-                    "size": parts[1].parse::<u64>().unwrap_or(0),
-                    "created_date": parts[2],
-                    "modified_date": parts[3],
-                    "owner": parts[4],
-                    "status": {
-                        "read": perms.contains("r"),
-                        "write": perms.contains("w"),
-                        "execute": perms.contains("x")
-                    }
-                }))
-            }
-        })
-        .collect::<Vec<_>>();
-
-    let total = match mt_server_type_id {
-        1 => data.len() as i64,
-        2 => output
+    if output.len() > 0 {
+        let mut data = output
             .lines()
-            .next()
-            .and_then(|first| first.trim().parse::<usize>().ok())
-            .unwrap_or(0) as i64,
-        _ => {
-            return Err(common::error_message(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "ssh.unknownServerType",
-            ));
-        }
-    };
+            .filter_map(|line| {
+                let parts: Vec<&str> = line.split('|').collect();
 
-    data.sort_by(|a, b| {
-        let (a_val, b_val) = match pagination
-            .sort
-            .as_deref()
-            .unwrap_or("name")
-            .to_lowercase()
-            .as_str()
-        {
-            "createddate" => (
-                a.get("created_date").and_then(|v| v.as_str()),
-                b.get("created_date").and_then(|v| v.as_str()),
-            ),
-            _ => (
-                a.get("name").and_then(|v| v.as_str()),
-                b.get("name").and_then(|v| v.as_str()),
-            ),
+                if parts.len() < 6 {
+                    return None;
+                }
+
+                if 1 == mt_server_type_id
+                    && !pagination.search.as_deref().unwrap_or("").is_empty()
+                    && !parts[0]
+                        .to_lowercase()
+                        .contains(&pagination.search.as_deref().unwrap_or("").to_lowercase())
+                {
+                    None
+                } else {
+                    let directory_flag = match mt_server_type_id {
+                        1 => {
+                            if parts[4].trim() == "directory" {
+                                1
+                            } else {
+                                0
+                            }
+                        }
+                        2 => {
+                            if parts[4].trim().to_lowercase() == "directory" {
+                                1
+                            } else {
+                                0
+                            }
+                        }
+                        _ => 0,
+                    };
+                    Some(json_marco!({
+                        "name": parts[0],
+                        "directoryFlag" : directory_flag,
+                        "size": parts[1].parse::<u64>().unwrap_or(0),
+                        "created_date": parts[2],
+                        "modified_date": parts[3],
+                        "owner": parts[6],
+                        "status": parts[5]
+                    }))
+                }
+            })
+            .collect::<Vec<_>>();
+
+        let total = match mt_server_type_id {
+            1 => data.len() as i64,
+            2 => output
+                .lines()
+                .next()
+                .and_then(|first| first.trim().parse::<usize>().ok())
+                .unwrap_or(0) as i64,
+            _ => {
+                return Err(common::error_message(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "ssh.unknownServerType",
+                ));
+            }
         };
 
-        match (a_val, b_val) {
-            (Some(a), Some(b)) => {
-                if pagination.dir.as_deref().unwrap_or("asc").to_lowercase() == "desc" {
-                    b.cmp(a)
-                } else {
-                    a.cmp(b)
+        data.sort_by(|a, b| {
+            let sort_field = pagination.sort.as_deref().unwrap_or("name").to_lowercase();
+            let is_desc = pagination
+                .dir
+                .as_deref()
+                .unwrap_or("asc")
+                .eq_ignore_ascii_case("desc");
+
+            let ordering = match sort_field.as_str() {
+                "size" => {
+                    let a_val = a.get("size").and_then(|v| v.as_u64());
+                    let b_val = b.get("size").and_then(|v| v.as_u64());
+                    match (a_val, b_val) {
+                        (Some(a), Some(b)) => a.cmp(&b),
+                        _ => std::cmp::Ordering::Equal,
+                    }
                 }
+                "modified_date" => {
+                    let a_val = a.get("modified_date").and_then(|v| v.as_str());
+                    let b_val = b.get("modified_date").and_then(|v| v.as_str());
+                    match (a_val, b_val) {
+                        (Some(a), Some(b)) => a.cmp(b),
+                        _ => std::cmp::Ordering::Equal,
+                    }
+                }
+                _ => {
+                    let a_val = a.get("name").and_then(|v| v.as_str());
+                    let b_val = b.get("name").and_then(|v| v.as_str());
+                    match (a_val, b_val) {
+                        (Some(a), Some(b)) => a.cmp(b),
+                        _ => std::cmp::Ordering::Equal,
+                    }
+                }
+            };
+
+            if is_desc {
+                ordering.reverse()
+            } else {
+                ordering
             }
-            _ => std::cmp::Ordering::Equal,
-        }
-    });
+        });
 
-    let paginated_data = match mt_server_type_id {
-        1 => data
-            .into_iter()
-            .skip(start as usize)
-            .take(length as usize)
-            .collect::<Vec<_>>(),
-        2 => data,
-        _ => {
-            return Err(common::error_message(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "ssh.unknownServerType",
-            ));
-        }
-    };
+        let paginated_data = match mt_server_type_id {
+            1 => data
+                .into_iter()
+                .skip(start as usize)
+                .take(length as usize)
+                .collect::<Vec<_>>(),
+            2 => data,
+            _ => {
+                return Err(common::error_message(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "ssh.unknownServerType",
+                ));
+            }
+        };
 
-    let directory_parts: Vec<String> = dir_path
-        .split('/')
-        .filter(|s| !s.is_empty())
-        .map(|s| s.to_string())
-        .collect();
+        let directory_parts: Vec<String> = dir_path
+            .split('/')
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string())
+            .collect();
 
-    Ok(Json(PaginatedDirectoryResponse {
-        total: total,
-        data: paginated_data,
-        directory: directory_parts,
-    }))
+        Ok(Json(PaginatedDirectoryResponse {
+            total: total,
+            data: paginated_data,
+            directory: directory_parts,
+        }))
+    } else {
+        return Err(common::error_message(
+            StatusCode::NOT_FOUND,
+            "ssh.unknownPath",
+        ));
+    }
 }
