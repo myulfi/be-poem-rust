@@ -84,7 +84,9 @@ pub fn routes() -> Route {
                 .delete(server::delete),
         )
         .at("/:id/server-connect.json", get(server_command::connect))
-        .at("/:id/server-directory.json", get(server_command::directory))
+        .at("/:id/server-directory.json", get(server_command::directory_list))
+        .at("/:id/server-folder.json", post(server_command::add_folder))
+        .at("/:id/server-file.json", post(server_command::add_file).get(server_command::get_file))
         .at("/api.json", get(api::list).post(api::add))
         .at(
             "/:id/api.json",

@@ -119,3 +119,70 @@ pub fn encode_special_chars(input: &str) -> String {
         })
         .collect()
 }
+
+pub fn is_valid_filename(filename: &str) -> bool {
+    let len = filename.len();
+    if len == 0 || len > 255 {
+        return false;
+    }
+    // Cek karakter yang diperbolehkan
+    if !filename
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.' || c == ' ')
+    {
+        return false;
+    }
+    // Cek path traversal
+    if filename.contains('/') || filename.contains('\\') || filename.contains("..") {
+        return false;
+    }
+    true
+}
+
+pub fn is_valid_directory_path(path: &str) -> bool {
+    if path.is_empty() {
+        return false;
+    }
+
+    if path.contains("..") {
+        return false; // cegah path traversal
+    }
+
+    let mut chars = path.chars();
+
+    // Kalau absolute path boleh mulai '/'
+    if let Some(first) = chars.next() {
+        if first != '/' && !is_valid_path_char(first) {
+            return false;
+        }
+    } else {
+        // path kosong
+        return false;
+    }
+
+    // cek sisa karakter
+    for c in chars {
+        if c != '/' && !is_valid_path_char(c) {
+            return false;
+        }
+    }
+
+    // cek tiap segment (folder name) tidak kosong
+    for segment in path.split('/') {
+        if segment.is_empty() {
+            // boleh kosong hanya kalau di awal (abs path) atau akhir (slash di akhir)
+            continue;
+        }
+        // cek tiap karakter segment valid
+        if !segment.chars().all(is_valid_path_char) {
+            return false;
+        }
+    }
+
+    true
+}
+
+// karakter valid untuk nama folder/file
+fn is_valid_path_char(c: char) -> bool {
+    c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.' || c == ' '
+}

@@ -58,3 +58,28 @@ pub struct EntryExternalServer {
     #[serde(default)]
     pub version: i16,
 }
+
+#[derive(Serialize, Deserialize, Validate)]
+pub struct EntryExternalServerDirectory {
+    #[serde(rename = "name")]
+    #[validate(length(
+        min = 1,
+        max = 20,
+        message = "Name must be between 1 and 20 characters"
+    ))]
+    pub nm: String,
+    #[serde(rename = "directory")]
+    #[validate(length(min = 1, message = "Directory must have at least one item"))]
+    pub dir: Vec<String>,
+}
+
+#[derive(Serialize, Deserialize, Validate)]
+pub struct EntryExternalServerFile {
+    #[serde(rename = "name")]
+    #[validate(length(min = 1, message = "Name must be fill"))]
+    pub nm: String,
+    pub content: String,
+    #[serde(rename = "directory")]
+    #[validate(length(min = 1, message = "Directory must have at least one item"))]
+    pub dir: Vec<String>,
+}

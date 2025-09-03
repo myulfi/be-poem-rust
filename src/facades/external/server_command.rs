@@ -6,8 +6,9 @@ use std::time::Duration;
 
 use crate::db::DbPool;
 use crate::models::common::DataResponse;
+use crate::models::external::server::{EntryExternalServerDirectory, EntryExternalServerFile};
 use crate::schema::tbl_ext_server;
-use crate::utils::common;
+use crate::utils::common::{self, is_valid_directory_path, is_valid_filename};
 use diesel::prelude::*;
 
 use poem::web::Query;
@@ -30,6 +31,12 @@ struct DirectoryPagination {
     pub search: Option<String>,
     pub sort: Option<String>,
     pub dir: Option<String>,
+    pub directory: String,
+}
+
+#[derive(Deserialize)]
+struct FileData {
+    pub name: String,
     pub directory: String,
 }
 
@@ -286,7 +293,7 @@ pub async fn connect(
 }
 
 #[handler]
-pub async fn directory(
+pub async fn directory_list(
     pool: Data<&DbPool>,
     _: crate::auth::middleware::JwtAuth,
     Path(ext_server_id): Path<i16>,
@@ -310,53 +317,8 @@ pub async fn directory(
     }
 
     let command = match mt_server_type_id {
-        1 => format!(
-            r#"cd "{}" && ls -A | while read f; do [ -e "$f" ] || continue; stat --format="%n|%s|%w|%y|%F|%A|%U" "$f"; done"#,
-            dir_path
-        ),
-        2 => format!(
-            r#"powershell -Command "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8;{}""#,
-            if dir_path.len() > 0 {
-                format!(
-                    r#"
-                        $search = "{}";
-                        $path = '{}/';
-                        $items = Get-ChildItem -LiteralPath $path | Where-Object {{
-                            $search -eq "" -or $_.Name -and $_.Name.ToLower().Contains($search)
-                        }};
-                        $sorted = $items | Sort-Object {} {};
-                        Write-Output $sorted.Count;
-                        $sorted | Select-Object -Skip {} -First {} | ForEach-Object {{
-                            '{{0}}|{{1}}|{{2}}|{{3}}|{{4}}|{{5}}|{{6}}' -f $_.Name, $_.Length, $_.CreationTimeUtc, $_.LastWriteTimeUtc, $_.Attributes, $_.Mode, $_.PSIsContainer
-                        }}
-                    "#,
-                    pagination.search.as_deref().unwrap_or("").to_lowercase(),
-                    dir_path,
-                    match pagination.sort.as_deref() {
-                        Some("modified_date") => "LastWriteTimeUtc",
-                        Some("size") => "Length",
-                        _ => "Name",
-                    },
-                    match pagination.dir.as_deref() {
-                        Some("desc") => "-Descending",
-                        _ => "",
-                    },
-                    start,
-                    length
-                )
-            } else {
-                format!(
-                    r#"
-                        $drives = [System.IO.DriveInfo]::GetDrives() | Where-Object {{ $_.IsReady }};
-                        Write-Output $drives.Count;
-                        foreach ($drive in $drives) {{
-                            '{{0}}|{{1}}|{{2}}|{{3}}|Directory|d-----|-----' -f $drive.Name.TrimEnd('\'), $drive.TotalSize, $drive.RootDirectory.CreationTimeUtc, $drive.RootDirectory.LastWriteTimeUtc;
-                        }}
-                    "#
-                )
-            }
-            .replace('"', "\\\"").replace('\n', " ").replace('\r', "")
-        ),
+        1 => format!(r#"[ -d "{}" ] && echo "1" || echo "0""#, dir_path),
+        2 => format!(r#"IF EXIST "{}\" (echo 1) ELSE (echo 0)"#, dir_path),
         _ => {
             return Err(common::error_message(
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -364,63 +326,61 @@ pub async fn directory(
             ));
         }
     };
-
     let output = run_ssh_command(&session, &command)?;
-    if output.len() > 0 {
-        let mut data = output
-            .lines()
-            .filter_map(|line| {
-                let parts: Vec<&str> = line.split('|').collect();
-
-                if parts.len() < 6 {
-                    return None;
-                }
-
-                if 1 == mt_server_type_id
-                    && !pagination.search.as_deref().unwrap_or("").is_empty()
-                    && !parts[0]
-                        .to_lowercase()
-                        .contains(&pagination.search.as_deref().unwrap_or("").to_lowercase())
-                {
-                    None
+    if 1 == output
+        .lines()
+        .next()
+        .and_then(|first| first.trim().parse::<usize>().ok())
+        .unwrap_or(0) as i64
+    {
+        let command = match mt_server_type_id {
+            1 => format!(
+                r#"cd "{}" && ls -A | while read f; do [ -e "$f" ] || continue; stat --format="%n|%s|%w|%y|%F|%A|%U" "$f"; done"#,
+                dir_path
+            ),
+            2 => format!(
+                r#"powershell -Command "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8;{}""#,
+                if dir_path.len() > 0 {
+                    format!(
+                        r#"
+                            $search = "{}";
+                            $path = '{}/';
+                            $items = Get-ChildItem -LiteralPath $path | Where-Object {{
+                                $search -eq "" -or $_.Name -and $_.Name.ToLower().Contains($search)
+                            }};
+                            $sorted = $items | Sort-Object {} {};
+                            Write-Output $sorted.Count;
+                            $sorted | Select-Object -Skip {} -First {} | ForEach-Object {{
+                                '{{0}}|{{1}}|{{2}}|{{3}}|{{4}}|{{5}}|{{6}}' -f $_.Name, $_.Length, $_.CreationTimeUtc, $_.LastWriteTimeUtc, $_.Attributes, $_.Mode, $_.PSIsContainer
+                            }}
+                        "#,
+                        pagination.search.as_deref().unwrap_or("").to_lowercase(),
+                        dir_path,
+                        match pagination.sort.as_deref() {
+                            Some("modified_date") => "LastWriteTimeUtc",
+                            Some("size") => "Length",
+                            _ => "Name",
+                        },
+                        match pagination.dir.as_deref() {
+                            Some("desc") => "-Descending",
+                            _ => "",
+                        },
+                        start,
+                        length
+                    )
                 } else {
-                    let directory_flag = match mt_server_type_id {
-                        1 => {
-                            if parts[4].trim() == "directory" {
-                                1
-                            } else {
-                                0
-                            }
-                        }
-                        2 => {
-                            if parts[4].trim().to_lowercase() == "directory" {
-                                1
-                            } else {
-                                0
-                            }
-                        }
-                        _ => 0,
-                    };
-                    Some(json_marco!({
-                        "name": parts[0],
-                        "directoryFlag" : directory_flag,
-                        "size": parts[1].parse::<u64>().unwrap_or(0),
-                        "created_date": parts[2],
-                        "modified_date": parts[3],
-                        "owner": parts[6],
-                        "status": parts[5]
-                    }))
+                    format!(
+                        r#"
+                            $drives = [System.IO.DriveInfo]::GetDrives() | Where-Object {{ $_.IsReady }};
+                            Write-Output $drives.Count;
+                            foreach ($drive in $drives) {{
+                                '{{0}}|{{1}}|{{2}}|{{3}}|Directory|d-----|-----' -f $drive.Name.TrimEnd('\'), $drive.TotalSize, $drive.RootDirectory.CreationTimeUtc, $drive.RootDirectory.LastWriteTimeUtc;
+                            }}
+                        "#
+                    )
                 }
-            })
-            .collect::<Vec<_>>();
-
-        let total = match mt_server_type_id {
-            1 => data.len() as i64,
-            2 => output
-                .lines()
-                .next()
-                .and_then(|first| first.trim().parse::<usize>().ok())
-                .unwrap_or(0) as i64,
+                .replace('"', "\\\"").replace('\n', " ").replace('\r', "")
+            ),
             _ => {
                 return Err(common::error_message(
                     StatusCode::INTERNAL_SERVER_ERROR,
@@ -429,62 +389,132 @@ pub async fn directory(
             }
         };
 
-        data.sort_by(|a, b| {
-            let sort_field = pagination.sort.as_deref().unwrap_or("name").to_lowercase();
-            let is_desc = pagination
-                .dir
-                .as_deref()
-                .unwrap_or("asc")
-                .eq_ignore_ascii_case("desc");
+        let paginated_data;
+        let total;
+        let output = run_ssh_command(&session, &command)?;
+        if output.len() > 0 {
+            let mut data = output
+                .lines()
+                .filter_map(|line| {
+                    let parts: Vec<&str> = line.split('|').collect();
 
-            let ordering = match sort_field.as_str() {
-                "size" => {
-                    let a_val = a.get("size").and_then(|v| v.as_u64());
-                    let b_val = b.get("size").and_then(|v| v.as_u64());
-                    match (a_val, b_val) {
-                        (Some(a), Some(b)) => a.cmp(&b),
-                        _ => std::cmp::Ordering::Equal,
+                    if parts.len() < 6 {
+                        return None;
                     }
-                }
-                "modified_date" => {
-                    let a_val = a.get("modified_date").and_then(|v| v.as_str());
-                    let b_val = b.get("modified_date").and_then(|v| v.as_str());
-                    match (a_val, b_val) {
-                        (Some(a), Some(b)) => a.cmp(b),
-                        _ => std::cmp::Ordering::Equal,
+
+                    if 1 == mt_server_type_id
+                        && !pagination.search.as_deref().unwrap_or("").is_empty()
+                        && !parts[0]
+                            .to_lowercase()
+                            .contains(&pagination.search.as_deref().unwrap_or("").to_lowercase())
+                    {
+                        None
+                    } else {
+                        let directory_flag = match mt_server_type_id {
+                            1 => {
+                                if parts[4].trim() == "directory" {
+                                    1
+                                } else {
+                                    0
+                                }
+                            }
+                            2 => {
+                                if parts[4].trim().to_lowercase() == "directory" {
+                                    1
+                                } else {
+                                    0
+                                }
+                            }
+                            _ => 0,
+                        };
+                        Some(json_marco!({
+                            "name": parts[0],
+                            "directoryFlag" : directory_flag,
+                            "size": parts[1].parse::<u64>().unwrap_or(0),
+                            "created_date": parts[2],
+                            "modified_date": parts[3],
+                            "owner": parts[6],
+                            "status": parts[5]
+                        }))
                     }
-                }
+                })
+                .collect::<Vec<_>>();
+
+            total = match mt_server_type_id {
+                1 => data.len() as i64,
+                2 => output
+                    .lines()
+                    .next()
+                    .and_then(|first| first.trim().parse::<usize>().ok())
+                    .unwrap_or(0) as i64,
                 _ => {
-                    let a_val = a.get("name").and_then(|v| v.as_str());
-                    let b_val = b.get("name").and_then(|v| v.as_str());
-                    match (a_val, b_val) {
-                        (Some(a), Some(b)) => a.cmp(b),
-                        _ => std::cmp::Ordering::Equal,
-                    }
+                    return Err(common::error_message(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        "ssh.unknownServerType",
+                    ));
                 }
             };
 
-            if is_desc {
-                ordering.reverse()
-            } else {
-                ordering
-            }
-        });
+            data.sort_by(|a, b| {
+                let sort_field = pagination.sort.as_deref().unwrap_or("name").to_lowercase();
+                let is_desc = pagination
+                    .dir
+                    .as_deref()
+                    .unwrap_or("asc")
+                    .eq_ignore_ascii_case("desc");
 
-        let paginated_data = match mt_server_type_id {
-            1 => data
-                .into_iter()
-                .skip(start as usize)
-                .take(length as usize)
-                .collect::<Vec<_>>(),
-            2 => data,
-            _ => {
-                return Err(common::error_message(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "ssh.unknownServerType",
-                ));
-            }
-        };
+                let ordering = match sort_field.as_str() {
+                    "size" => {
+                        let a_val = a.get("size").and_then(|v| v.as_u64());
+                        let b_val = b.get("size").and_then(|v| v.as_u64());
+                        match (a_val, b_val) {
+                            (Some(a), Some(b)) => a.cmp(&b),
+                            _ => std::cmp::Ordering::Equal,
+                        }
+                    }
+                    "modified_date" => {
+                        let a_val = a.get("modified_date").and_then(|v| v.as_str());
+                        let b_val = b.get("modified_date").and_then(|v| v.as_str());
+                        match (a_val, b_val) {
+                            (Some(a), Some(b)) => a.cmp(b),
+                            _ => std::cmp::Ordering::Equal,
+                        }
+                    }
+                    _ => {
+                        let a_val = a.get("name").and_then(|v| v.as_str());
+                        let b_val = b.get("name").and_then(|v| v.as_str());
+                        match (a_val, b_val) {
+                            (Some(a), Some(b)) => a.cmp(b),
+                            _ => std::cmp::Ordering::Equal,
+                        }
+                    }
+                };
+
+                if is_desc {
+                    ordering.reverse()
+                } else {
+                    ordering
+                }
+            });
+
+            paginated_data = match mt_server_type_id {
+                1 => data
+                    .into_iter()
+                    .skip(start as usize)
+                    .take(length as usize)
+                    .collect::<Vec<_>>(),
+                2 => data,
+                _ => {
+                    return Err(common::error_message(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        "ssh.unknownServerType",
+                    ));
+                }
+            };
+        } else {
+            total = 0;
+            paginated_data = vec![];
+        }
 
         let directory_parts: Vec<String> = dir_path
             .split('/')
@@ -499,8 +529,140 @@ pub async fn directory(
         }))
     } else {
         return Err(common::error_message(
-            StatusCode::NOT_FOUND,
+            StatusCode::INTERNAL_SERVER_ERROR,
             "ssh.unknownPath",
         ));
     }
+}
+
+#[handler]
+pub async fn add_folder(
+    pool: Data<&DbPool>,
+    _: crate::auth::middleware::JwtAuth,
+    Path(ext_server_id): Path<i16>,
+    Json(entry_ext_server_directory): Json<EntryExternalServerDirectory>,
+) -> Result<impl IntoResponse> {
+    let mut dir_path = entry_ext_server_directory.dir.join("/");
+    if !is_valid_directory_path(&dir_path) {
+        return Err(common::error_message(
+            StatusCode::BAD_REQUEST,
+            "error.invalidDirectory",
+        ));
+    }
+
+    let conn = &mut pool.get().map_err(|_| {
+        common::error_message(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "information.connectionFailed",
+        )
+    })?;
+
+    let (session, mt_server_type_id) = create_ssh_session(conn, ext_server_id)?;
+
+    if mt_server_type_id == 1 && !dir_path.starts_with('/') {
+        dir_path = format!("/{}", dir_path);
+    }
+
+    let command = format!(r#"mkdir "{}/{}""#, dir_path, entry_ext_server_directory.nm);
+    run_ssh_command(&session, &command)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[handler]
+pub async fn add_file(
+    pool: Data<&DbPool>,
+    _: crate::auth::middleware::JwtAuth,
+    Path(ext_server_id): Path<i16>,
+    Json(entry_ext_server_file): Json<EntryExternalServerFile>,
+) -> Result<impl IntoResponse> {
+    if !is_valid_filename(&entry_ext_server_file.nm) {
+        return Err(common::error_message(
+            StatusCode::BAD_REQUEST,
+            "error.invalidFilename",
+        ));
+    }
+
+    let mut dir_path = entry_ext_server_file.dir.join("/");
+    if !is_valid_directory_path(&dir_path) {
+        return Err(common::error_message(
+            StatusCode::BAD_REQUEST,
+            "error.invalidDirectory",
+        ));
+    }
+
+    let conn = &mut pool.get().map_err(|_| {
+        common::error_message(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "information.connectionFailed",
+        )
+    })?;
+
+    let (session, mt_server_type_id) = create_ssh_session(conn, ext_server_id)?;
+
+    if mt_server_type_id == 1 && !dir_path.starts_with('/') {
+        dir_path = format!("/{}", dir_path);
+    }
+
+    let command = format!(
+        //     r#"cat <<'EOF' > "{}/{}"
+        // {}
+        // EOF"#,
+        r#"cat <<'EOF' > "{}/{}"
+{}"#,
+        dir_path, entry_ext_server_file.nm, entry_ext_server_file.content
+    );
+    run_ssh_command(&session, &command)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[handler]
+pub async fn get_file(
+    pool: Data<&DbPool>,
+    _: crate::auth::middleware::JwtAuth,
+    Path(ext_server_id): Path<i16>,
+    Query(file_data): Query<FileData>,
+) -> Result<impl IntoResponse> {
+    if !is_valid_filename(&file_data.name) {
+        return Err(common::error_message(
+            StatusCode::BAD_REQUEST,
+            "error.invalidFilename",
+        ));
+    }
+
+    let mut dir_path = file_data.directory;
+    if !is_valid_directory_path(&dir_path) {
+        return Err(common::error_message(
+            StatusCode::BAD_REQUEST,
+            "error.invalidDirectory",
+        ));
+    }
+
+    let conn = &mut pool.get().map_err(|_| {
+        common::error_message(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "information.connectionFailed",
+        )
+    })?;
+
+    let (session, mt_server_type_id) = create_ssh_session(conn, ext_server_id)?;
+
+    if mt_server_type_id == 1 && !dir_path.starts_with('/') {
+        dir_path = format!("/{}", dir_path);
+    }
+
+    let command = match mt_server_type_id {
+        1 => format!(r#"cat "{}/{}""#, dir_path, file_data.name),
+        2 => format!(r#"type "{}/{}""#, dir_path, file_data.name),
+        _ => {
+            return Err(common::error_message(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "ssh.unknownServerType",
+            ));
+        }
+    };
+
+    let output = run_ssh_command(&session, &command)?;
+    Ok(Json(json_marco!({
+        "content": output
+    })))
 }
