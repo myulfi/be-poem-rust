@@ -7,6 +7,9 @@ use crate::{models::common::Pagination, utils::common};
 use poem::{IntoResponse, Response, Result, error::Error, http::StatusCode, web::Json};
 use serde::Serialize;
 
+use regex::Regex;
+use std::path::Path;
+
 #[derive(Serialize)]
 pub struct MessageResponse {
     message: String,
@@ -184,5 +187,42 @@ pub fn is_valid_directory_path(path: &str) -> bool {
 
 // karakter valid untuk nama folder/file
 fn is_valid_path_char(c: char) -> bool {
-    c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.' || c == ' '
+    c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.' || c == ' ' || c == ':'
+}
+
+pub fn generate_copy_name(name: &str) -> String {
+    // Regex untuk menangkap pola seperti: _copy, _copy_2, _copy_99, dst
+    let re = Regex::new(r"(?i)_copy(?:_(\d+))?$").unwrap();
+
+    let path = Path::new(name);
+
+    let (base_name, ext) = match (path.file_stem(), path.extension()) {
+        (Some(stem), Some(ext)) => (
+            stem.to_string_lossy().to_string(),
+            Some(ext.to_string_lossy().to_string()),
+        ),
+        (Some(stem), None) => (stem.to_string_lossy().to_string(), None),
+        _ => return String::from(name), // fallback, nama tidak valid
+    };
+
+    let new_base = if let Some(caps) = re.captures(&base_name) {
+        // Sudah ada _copy atau _copy_N, kita tingkatkan N
+        if let Some(matched_number) = caps.get(1) {
+            let number: u32 = matched_number.as_str().parse().unwrap_or(1);
+            let prefix = &base_name[..caps.get(0).unwrap().start()];
+            format!("{}_copy_{}", prefix, number + 1)
+        } else {
+            // Hanya _copy, tambahkan _2
+            format!("{}_copy_2", &base_name[..caps.get(0).unwrap().start()])
+        }
+    } else {
+        // Belum ada _copy, tambahkan
+        format!("{}_copy", base_name)
+    };
+
+    // Gabungkan kembali dengan ekstensi (jika ada)
+    match ext {
+        Some(ext) => format!("{}.{}", new_base, ext),
+        None => new_base,
+    }
 }

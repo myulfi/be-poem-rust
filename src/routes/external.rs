@@ -4,7 +4,7 @@ use crate::facades::external::database_query;
 use crate::facades::external::server;
 use crate::facades::external::server_command;
 
-use poem::{Route, get, post};
+use poem::{Route, get, patch, post};
 
 pub fn routes() -> Route {
     Route::new()
@@ -86,7 +86,20 @@ pub fn routes() -> Route {
         .at("/:id/server-connect.json", get(server_command::connect))
         .at("/:id/server-directory.json", get(server_command::directory_list))
         .at("/:id/server-folder.json", post(server_command::add_folder))
-        .at("/:id/server-file.json", post(server_command::add_file).get(server_command::get_file))
+        .at(
+            "/:id/server-file.json", 
+            get(server_command::get_file)
+            .post(server_command::add_file)
+            .patch(server_command::update_file)
+        )
+        .at(
+            "/:id/server-entity-remove.json", 
+            patch(server_command::remove_entity)
+        )
+        .at(
+            "/:id/server-entity-clone.json", 
+            patch(server_command::clone_entity)
+        )
         .at("/api.json", get(api::list).post(api::add))
         .at(
             "/:id/api.json",

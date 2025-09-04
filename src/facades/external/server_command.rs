@@ -6,9 +6,11 @@ use std::time::Duration;
 
 use crate::db::DbPool;
 use crate::models::common::DataResponse;
-use crate::models::external::server::{EntryExternalServerDirectory, EntryExternalServerFile};
+use crate::models::external::server::{
+    EntryExternalServerDirectory, EntryExternalServerFile, MultipleExternalServerFile,
+};
 use crate::schema::tbl_ext_server;
-use crate::utils::common::{self, is_valid_directory_path, is_valid_filename};
+use crate::utils::common::{self, generate_copy_name, is_valid_directory_path, is_valid_filename};
 use diesel::prelude::*;
 
 use poem::web::Query;
@@ -351,7 +353,7 @@ pub async fn directory_list(
                             $sorted = $items | Sort-Object {} {};
                             Write-Output $sorted.Count;
                             $sorted | Select-Object -Skip {} -First {} | ForEach-Object {{
-                                '{{0}}|{{1}}|{{2}}|{{3}}|{{4}}|{{5}}|{{6}}' -f $_.Name, $_.Length, $_.CreationTimeUtc, $_.LastWriteTimeUtc, $_.Attributes, $_.Mode, $_.PSIsContainer
+                                '{{0}}|{{1}}|{{2}}|{{3}}|{{4}}|{{5}}|{{6}}' -f $_.Name, $_.Length, $_.CreationTimeUtc, $_.LastWriteTimeUtc, $_.PSIsContainer, $_.Mode, $_.PSIsContainer
                             }}
                         "#,
                         pagination.search.as_deref().unwrap_or("").to_lowercase(),
@@ -374,7 +376,7 @@ pub async fn directory_list(
                             $drives = [System.IO.DriveInfo]::GetDrives() | Where-Object {{ $_.IsReady }};
                             Write-Output $drives.Count;
                             foreach ($drive in $drives) {{
-                                '{{0}}|{{1}}|{{2}}|{{3}}|Directory|d-----|-----' -f $drive.Name.TrimEnd('\'), $drive.TotalSize, $drive.RootDirectory.CreationTimeUtc, $drive.RootDirectory.LastWriteTimeUtc;
+                                '{{0}}|{{1}}|{{2}}|{{3}}|True|d-----|-----' -f $drive.Name.TrimEnd('\'), $drive.TotalSize, $drive.RootDirectory.CreationTimeUtc, $drive.RootDirectory.LastWriteTimeUtc;
                             }}
                         "#
                     )
@@ -419,7 +421,7 @@ pub async fn directory_list(
                                 }
                             }
                             2 => {
-                                if parts[4].trim().to_lowercase() == "directory" {
+                                if parts[4].trim().to_lowercase() == "true" {
                                     1
                                 } else {
                                     0
@@ -535,6 +537,34 @@ pub async fn directory_list(
     }
 }
 
+fn check_entity_exists(
+    session: &ssh2::Session,
+    mt_server_type_id: i16,
+    dir_path: &str,
+) -> Result<bool> {
+    let command = match mt_server_type_id {
+        1 => format!(r#"[ -e "{}" ] && echo "1" || echo "0""#, dir_path),
+        2 => format!(r#"IF EXIST "{}" (echo 1) ELSE (echo 0)"#, dir_path),
+        _ => {
+            return Err(common::error_message(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "ssh.unknownServerType",
+            ));
+        }
+    };
+
+    let output = run_ssh_command(session, &command)?;
+
+    let exists = output
+        .lines()
+        .next()
+        .and_then(|first| first.trim().parse::<usize>().ok())
+        .unwrap_or(0)
+        == 1;
+
+    Ok(exists)
+}
+
 #[handler]
 pub async fn add_folder(
     pool: Data<&DbPool>,
@@ -563,56 +593,22 @@ pub async fn add_folder(
         dir_path = format!("/{}", dir_path);
     }
 
-    let command = format!(r#"mkdir "{}/{}""#, dir_path, entry_ext_server_directory.nm);
-    run_ssh_command(&session, &command)?;
-    Ok(StatusCode::NO_CONTENT)
-}
+    let entity_exists = check_entity_exists(
+        &session,
+        mt_server_type_id,
+        &format!("{}/{}", dir_path, entry_ext_server_directory.nm),
+    )?;
 
-#[handler]
-pub async fn add_file(
-    pool: Data<&DbPool>,
-    _: crate::auth::middleware::JwtAuth,
-    Path(ext_server_id): Path<i16>,
-    Json(entry_ext_server_file): Json<EntryExternalServerFile>,
-) -> Result<impl IntoResponse> {
-    if !is_valid_filename(&entry_ext_server_file.nm) {
-        return Err(common::error_message(
-            StatusCode::BAD_REQUEST,
-            "error.invalidFilename",
-        ));
+    if !entity_exists {
+        let command = format!(r#"mkdir "{}/{}""#, dir_path, entry_ext_server_directory.nm);
+        run_ssh_command(&session, &command)?;
+        Ok(StatusCode::NO_CONTENT)
+    } else {
+        Err(common::error_message(
+            StatusCode::CONFLICT,
+            "ssh.alreadyExists",
+        ))
     }
-
-    let mut dir_path = entry_ext_server_file.dir.join("/");
-    if !is_valid_directory_path(&dir_path) {
-        return Err(common::error_message(
-            StatusCode::BAD_REQUEST,
-            "error.invalidDirectory",
-        ));
-    }
-
-    let conn = &mut pool.get().map_err(|_| {
-        common::error_message(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "information.connectionFailed",
-        )
-    })?;
-
-    let (session, mt_server_type_id) = create_ssh_session(conn, ext_server_id)?;
-
-    if mt_server_type_id == 1 && !dir_path.starts_with('/') {
-        dir_path = format!("/{}", dir_path);
-    }
-
-    let command = format!(
-        //     r#"cat <<'EOF' > "{}/{}"
-        // {}
-        // EOF"#,
-        r#"cat <<'EOF' > "{}/{}"
-{}"#,
-        dir_path, entry_ext_server_file.nm, entry_ext_server_file.content
-    );
-    run_ssh_command(&session, &command)?;
-    Ok(StatusCode::NO_CONTENT)
 }
 
 #[handler]
@@ -650,19 +646,313 @@ pub async fn get_file(
         dir_path = format!("/{}", dir_path);
     }
 
-    let command = match mt_server_type_id {
-        1 => format!(r#"cat "{}/{}""#, dir_path, file_data.name),
-        2 => format!(r#"type "{}/{}""#, dir_path, file_data.name),
-        _ => {
-            return Err(common::error_message(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "ssh.unknownServerType",
-            ));
-        }
-    };
+    let entity_exists = check_entity_exists(
+        &session,
+        mt_server_type_id,
+        &format!("{}/{}", dir_path, file_data.name),
+    )?;
 
-    let output = run_ssh_command(&session, &command)?;
-    Ok(Json(json_marco!({
-        "content": output
-    })))
+    if entity_exists {
+        let command = match mt_server_type_id {
+            1 => format!(r#"cat "{}/{}""#, dir_path, file_data.name),
+            2 => format!(
+                r#"powershell -Command "Get-Content -Path '{}\{}'"#,
+                dir_path, file_data.name
+            ),
+            _ => {
+                return Err(common::error_message(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "ssh.unknownServerType",
+                ));
+            }
+        };
+
+        let output = run_ssh_command(&session, &command)?;
+        Ok(Json(json_marco!({
+            "content": output
+        })))
+    } else {
+        Err(poem::Error::from_status(StatusCode::NOT_FOUND))
+    }
+}
+
+#[handler]
+pub async fn add_file(
+    pool: Data<&DbPool>,
+    _: crate::auth::middleware::JwtAuth,
+    Path(ext_server_id): Path<i16>,
+    Json(entry_ext_server_file): Json<EntryExternalServerFile>,
+) -> Result<impl IntoResponse> {
+    if !is_valid_filename(&entry_ext_server_file.nm) {
+        return Err(common::error_message(
+            StatusCode::BAD_REQUEST,
+            "error.invalidFilename",
+        ));
+    }
+
+    let mut dir_path = entry_ext_server_file.dir.join("/");
+    if !is_valid_directory_path(&dir_path) {
+        return Err(common::error_message(
+            StatusCode::BAD_REQUEST,
+            "error.invalidDirectory",
+        ));
+    }
+
+    let conn = &mut pool.get().map_err(|_| {
+        common::error_message(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "information.connectionFailed",
+        )
+    })?;
+
+    let (session, mt_server_type_id) = create_ssh_session(conn, ext_server_id)?;
+
+    if mt_server_type_id == 1 && !dir_path.starts_with('/') {
+        dir_path = format!("/{}", dir_path);
+    }
+
+    let entity_exists = check_entity_exists(
+        &session,
+        mt_server_type_id,
+        &format!("{}/{}", dir_path, entry_ext_server_file.nm),
+    )?;
+
+    if !entity_exists {
+        let command = match mt_server_type_id {
+            1 => format!(
+                "printf \"%s\" \"{}\" > \"{}/{}\"",
+                entry_ext_server_file.content.replace('"', "\\\""),
+                dir_path,
+                entry_ext_server_file.nm
+            ),
+            2 => format!(
+                "powershell -Command \"$Content = @\"{}\"@; Set-Content -Path '{}' -Value $Content\"",
+                entry_ext_server_file
+                    .content
+                    .replace('`', "``") // Escape backtick
+                    .replace('"', "`\"") // Escape double quotes
+                    .replace('$', "`$")
+                    .replace("@", "`@"),
+                format!("{}/{}", dir_path, entry_ext_server_file.nm)
+            ),
+            _ => {
+                return Err(common::error_message(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "ssh.unknownServerType",
+                ));
+            }
+        };
+
+        let output = run_ssh_command(&session, &command)?;
+        Ok(StatusCode::NO_CONTENT)
+    } else {
+        Err(common::error_message(
+            StatusCode::CONFLICT,
+            "ssh.fileAlreadyExist",
+        ))
+    }
+}
+
+#[handler]
+pub async fn update_file(
+    pool: Data<&DbPool>,
+    _: crate::auth::middleware::JwtAuth,
+    Path(ext_server_id): Path<i16>,
+    Json(entry_ext_server_file): Json<EntryExternalServerFile>,
+) -> Result<impl IntoResponse> {
+    if !is_valid_filename(&entry_ext_server_file.nm) {
+        return Err(common::error_message(
+            StatusCode::BAD_REQUEST,
+            "error.invalidFilename",
+        ));
+    }
+
+    let mut dir_path = entry_ext_server_file.dir.join("/");
+    if !is_valid_directory_path(&dir_path) {
+        return Err(common::error_message(
+            StatusCode::BAD_REQUEST,
+            "error.invalidDirectory",
+        ));
+    }
+
+    let conn = &mut pool.get().map_err(|_| {
+        common::error_message(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "information.connectionFailed",
+        )
+    })?;
+
+    let (session, mt_server_type_id) = create_ssh_session(conn, ext_server_id)?;
+
+    if mt_server_type_id == 1 && !dir_path.starts_with('/') {
+        dir_path = format!("/{}", dir_path);
+    }
+
+    let entity_exists = check_entity_exists(
+        &session,
+        mt_server_type_id,
+        &format!("{}/{}", dir_path, entry_ext_server_file.nm),
+    )?;
+
+    if entity_exists {
+        let command = match mt_server_type_id {
+            1 => format!(
+                "printf \"%s\" \"{}\" > \"{}/{}\"",
+                entry_ext_server_file.content.replace('"', "\\\""),
+                dir_path,
+                entry_ext_server_file.nm
+            ),
+            2 => format!(
+                "powershell -Command \"$Content = @\"{}\"@; Set-Content -Path '{}' -Value $Content\"",
+                entry_ext_server_file
+                    .content
+                    .replace('`', "``") // Escape backtick
+                    .replace('"', "`\"") // Escape double quotes
+                    .replace('$', "`$")
+                    .replace("@", "`@"),
+                format!("{}/{}", dir_path, entry_ext_server_file.nm)
+            ),
+            _ => {
+                return Err(common::error_message(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "ssh.unknownServerType",
+                ));
+            }
+        };
+
+        run_ssh_command(&session, &command)?;
+        Ok(StatusCode::NO_CONTENT)
+    } else {
+        Err(poem::Error::from_status(StatusCode::NOT_FOUND))
+    }
+}
+
+#[handler]
+pub async fn clone_entity(
+    pool: Data<&DbPool>,
+    _: crate::auth::middleware::JwtAuth,
+    Path(ext_server_id): Path<i16>,
+    Json(multiple_ext_server_file): Json<MultipleExternalServerFile>,
+) -> Result<impl IntoResponse> {
+    let mut dir_path = multiple_ext_server_file.dir.join("/");
+    if !is_valid_directory_path(&dir_path) {
+        return Err(common::error_message(
+            StatusCode::BAD_REQUEST,
+            "error.invalidDirectory",
+        ));
+    }
+
+    let conn = &mut pool.get().map_err(|_| {
+        common::error_message(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "information.connectionFailed",
+        )
+    })?;
+
+    let (session, mt_server_type_id) = create_ssh_session(conn, ext_server_id)?;
+
+    if mt_server_type_id == 1 && !dir_path.starts_with('/') {
+        dir_path = format!("/{}", dir_path);
+    }
+
+    for file_name in &multiple_ext_server_file.nm {
+        let mut new_name = generate_copy_name(file_name);
+
+        loop {
+            let exists = check_entity_exists(
+                &session,
+                mt_server_type_id,
+                &format!("{}/{}", dir_path, new_name),
+            )?;
+
+            // println!("{}", format!("{} : {}/{}", exists, dir_path, new_name));
+            if exists {
+                new_name = generate_copy_name(&new_name);
+            } else {
+                let command = match mt_server_type_id {
+                    1 => format!(
+                        "cp -r \"{}/{}\" \"{}/{}\"",
+                        dir_path, file_name, dir_path, new_name
+                    ),
+                    2 => format!(
+                        "Copy-Item -Path \"{}/{}\" -Destination \"{}/{}\" -Recurse",
+                        dir_path, file_name, dir_path, new_name
+                    ),
+                    _ => {
+                        return Err(common::error_message(
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            "ssh.unknownServerType",
+                        ));
+                    }
+                };
+
+                run_ssh_command(&session, &command)?;
+                break;
+            }
+        }
+    }
+
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[handler]
+pub async fn remove_entity(
+    pool: Data<&DbPool>,
+    _: crate::auth::middleware::JwtAuth,
+    Path(ext_server_id): Path<i16>,
+    Json(multiple_ext_server_file): Json<MultipleExternalServerFile>,
+) -> Result<impl IntoResponse> {
+    let mut dir_path = multiple_ext_server_file.dir.join("/");
+    if !is_valid_directory_path(&dir_path) {
+        return Err(common::error_message(
+            StatusCode::BAD_REQUEST,
+            "error.invalidDirectory",
+        ));
+    }
+
+    let conn = &mut pool.get().map_err(|_| {
+        common::error_message(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "information.connectionFailed",
+        )
+    })?;
+
+    let (session, mt_server_type_id) = create_ssh_session(conn, ext_server_id)?;
+
+    if mt_server_type_id == 1 && !dir_path.starts_with('/') {
+        dir_path = format!("/{}", dir_path);
+    }
+
+    let file_paths: Vec<String> = multiple_ext_server_file
+        .nm
+        .iter()
+        .map(|f| format!(r#""{}/{}""#, dir_path, f))
+        .collect();
+
+    let command = match mt_server_type_id {
+            1 => file_paths
+                .iter()
+                .map(|p| format!(r#"find {} -maxdepth 0 \( -type f -o -type d -empty \) -delete"#, p))
+                .collect::<Vec<_>>()
+                .join(" && "),
+            2 => file_paths
+                .iter()
+                .map(|p| {
+                    format!(
+                        r#"powershell -Command "Get-Item {} | Where-Object {{ ($_.PSIsContainer -and @(Get-ChildItem $_.FullName).Count -eq 0) -or (-not $_.PSIsContainer) }} | Remove-Item""#,
+                        p
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(" ; "),
+            _ => {
+                return Err(common::error_message(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "ssh.unknownServerType",
+                ));
+            }
+        };
+
+    run_ssh_command(&session, &command)?;
+    Ok(StatusCode::NO_CONTENT)
 }
