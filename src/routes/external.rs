@@ -93,12 +93,16 @@ pub fn routes() -> Route {
             .patch(server_command::update_file)
         )
         .at(
-            "/:id/server-entity-remove.json", 
-            patch(server_command::remove_entity)
-        )
-        .at(
             "/:id/server-entity-clone.json", 
             patch(server_command::clone_entity)
+        )
+        .at(
+            "/:id/server-entity-copy.json", 
+            patch(server_command::copy_entity)
+        )
+        .at(
+            "/:id/server-entity-remove.json", 
+            patch(server_command::remove_entity)
         )
         .at("/api.json", get(api::list).post(api::add))
         .at(

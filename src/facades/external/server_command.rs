@@ -7,7 +7,8 @@ use std::time::Duration;
 use crate::db::DbPool;
 use crate::models::common::DataResponse;
 use crate::models::external::server::{
-    EntryExternalServerDirectory, EntryExternalServerFile, MultipleExternalServerFile,
+    EntryExternalServerDirectory, EntryExternalServerFile, MultipleExternalServerEntity,
+    MultipleExternalServerFile,
 };
 use crate::schema::tbl_ext_server;
 use crate::utils::common::{self, generate_copy_name, is_valid_directory_path, is_valid_filename};
@@ -877,6 +878,87 @@ pub async fn clone_entity(
                     2 => format!(
                         "Copy-Item -Path \"{}/{}\" -Destination \"{}/{}\" -Recurse",
                         dir_path, file_name, dir_path, new_name
+                    ),
+                    _ => {
+                        return Err(common::error_message(
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            "ssh.unknownServerType",
+                        ));
+                    }
+                };
+
+                run_ssh_command(&session, &command)?;
+                break;
+            }
+        }
+    }
+
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[handler]
+pub async fn copy_entity(
+    pool: Data<&DbPool>,
+    _: crate::auth::middleware::JwtAuth,
+    Path(ext_server_id): Path<i16>,
+    Json(multiple_ext_server_file): Json<MultipleExternalServerEntity>,
+) -> Result<impl IntoResponse> {
+    let mut source_dir_path = multiple_ext_server_file.source_dir.join("/");
+    if !is_valid_directory_path(&source_dir_path) {
+        return Err(common::error_message(
+            StatusCode::BAD_REQUEST,
+            "error.invalidDirectory",
+        ));
+    }
+
+    let mut target_dir_path = multiple_ext_server_file.target_dir.join("/");
+    if !is_valid_directory_path(&target_dir_path) {
+        return Err(common::error_message(
+            StatusCode::BAD_REQUEST,
+            "error.invalidDirectory",
+        ));
+    }
+
+    let conn = &mut pool.get().map_err(|_| {
+        common::error_message(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "information.connectionFailed",
+        )
+    })?;
+
+    let (session, mt_server_type_id) = create_ssh_session(conn, ext_server_id)?;
+
+    if mt_server_type_id == 1 {
+        if !source_dir_path.starts_with('/') {
+            source_dir_path = format!("/{}", source_dir_path);
+        }
+
+        if !target_dir_path.starts_with('/') {
+            target_dir_path = format!("/{}", target_dir_path);
+        }
+    }
+
+    for file_name in &multiple_ext_server_file.nm {
+        let mut new_name = file_name.to_string();
+
+        loop {
+            let exists = check_entity_exists(
+                &session,
+                mt_server_type_id,
+                &format!("{}/{}", target_dir_path, new_name),
+            )?;
+
+            if exists {
+                new_name = generate_copy_name(&new_name);
+            } else {
+                let command = match mt_server_type_id {
+                    1 => format!(
+                        "cp -r \"{}/{}\" \"{}/{}\"",
+                        source_dir_path, file_name, target_dir_path, new_name
+                    ),
+                    2 => format!(
+                        "Copy-Item -Path \"{}/{}\" -Destination \"{}/{}\" -Recurse",
+                        source_dir_path, file_name, target_dir_path, new_name
                     ),
                     _ => {
                         return Err(common::error_message(

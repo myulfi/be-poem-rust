@@ -93,3 +93,16 @@ pub struct MultipleExternalServerFile {
     #[validate(length(min = 1, message = "Directory must have at least one item"))]
     pub dir: Vec<String>,
 }
+
+#[derive(Serialize, Deserialize, Validate)]
+pub struct MultipleExternalServerEntity {
+    #[serde(rename = "name")]
+    #[validate(length(min = 1, message = "Name must have at least one item"))]
+    pub nm: Vec<String>,
+    #[serde(rename = "sourceDirectory")]
+    #[validate(length(min = 1, message = "Soure Directory must have at least one item"))]
+    pub source_dir: Vec<String>,
+    #[serde(rename = "targetDirectory")]
+    #[validate(length(min = 1, message = "Target Directory must have at least one item"))]
+    pub target_dir: Vec<String>,
+}
