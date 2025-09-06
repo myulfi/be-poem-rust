@@ -28,7 +28,7 @@ impl<'a> FromRequest<'a> for JwtAuth {
                 common::error_message(StatusCode::UNAUTHORIZED, "Missing Bearer prefix")
             })?;
 
-            let secret = env::var(if "/refresh-token.json" == req.uri().path() {
+            let secret = env::var(if "/refresh-token.json" == req.original_uri().path() {
                 "JWT_REFRESH_TOKEN_SECRET"
             } else {
                 "JWT_ACCESS_TOKEN_SECRET"
