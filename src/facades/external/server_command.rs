@@ -783,7 +783,14 @@ pub async fn download_entity(
     Path(ext_server_id): Path<i16>,
     Query(file_data): Query<FileData>,
 ) -> Result<impl IntoResponse> {
-    if !is_valid_filename(&file_data.name) {
+    let names: Vec<String> = file_data
+        .name
+        .split("||")
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
+
+    if names.is_empty() || names.iter().any(|n| !is_valid_filename(n)) {
         return Err(common::error_message(
             StatusCode::BAD_REQUEST,
             "error.invalidFilename",
@@ -811,67 +818,113 @@ pub async fn download_entity(
         dir_path = format!("/{}", dir_path);
     }
 
-    let target_path = format!("{}/{}", dir_path, file_data.name);
-
-    let entity_exists = check_entity_exists(&session, mt_server_type_id, &target_path)?;
-    if !entity_exists {
-        return Err(poem::Error::from_status(StatusCode::NOT_FOUND));
+    // ==== Cek keberadaan semua nama ====
+    for name in &names {
+        let path = format!("{}/{}", dir_path, name);
+        if !check_entity_exists(&session, mt_server_type_id, &path)? {
+            return Err(common::error_message(
+                StatusCode::NOT_FOUND,
+                &format!("ssh.entityNotFound: {}", name),
+            ));
+        }
     }
 
-    let is_dir = check_is_directory(&session, mt_server_type_id, &target_path)?;
+    // ==== Kasus 1: hanya 1 nama, dan itu file ====
+    if names.len() == 1 {
+        let target_path = format!("{}/{}", dir_path, names[0]);
+        let is_dir = check_is_directory(&session, mt_server_type_id, &target_path)?;
 
-    let (file_name, base64_content) = if is_dir {
-        // ==== ZIP folder ====
-        let zip_name = format!("{}.zip", file_data.name);
-        let zip_path = format!("{}/{}", dir_path, zip_name);
+        if !is_dir {
+            // --- Encode file sebagai base64 ---
+            let base64_cmd = match mt_server_type_id {
+                1 => format!(r#"base64 "{}""#, target_path),
+                2 => format!(
+                    r#"powershell -Command "[Convert]::ToBase64String([IO.File]::ReadAllBytes('{}\{}'))""#,
+                    dir_path, names[0]
+                ),
+                _ => unreachable!(),
+            };
 
-        let command = match mt_server_type_id {
-            1 => format!(
-                r#"cd "{}" && zip -r "{}" "{}""#,
-                dir_path, zip_name, file_data.name
-            ),
-            2 => format!(
-                r#"powershell -Command "Compress-Archive -Path '{}\{}' -DestinationPath '{}\{}'"#,
-                dir_path, file_data.name, dir_path, zip_name
-            ),
-            _ => {
-                return Err(common::error_message(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "ssh.unknownServerType",
-                ));
-            }
-        };
-        run_ssh_command(&session, &command)?;
+            let output = run_ssh_command(&session, &base64_cmd)?;
 
-        // Read the zipped content and encode base64
-        let base64_cmd = match mt_server_type_id {
-            1 => format!(r#"base64 "{}/{}""#, dir_path, zip_name),
-            2 => format!(
-                r#"powershell -Command "[Convert]::ToBase64String([IO.File]::ReadAllBytes('{}\{}'))""#,
-                dir_path, zip_name
-            ),
-            _ => unreachable!(),
-        };
+            let decoded_bytes = base64::engine::general_purpose::STANDARD
+                .decode(output.trim())
+                .map_err(|_| {
+                    common::error_message(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        "ssh.decodeBase64Failed",
+                    )
+                })?;
 
-        let output = run_ssh_command(&session, &base64_cmd)?;
-        (zip_name, output)
+            let response = poem::Response::builder()
+                .status(StatusCode::OK)
+                .header(
+                    "Content-Disposition",
+                    format!(r#"attachment; filename="{}""#, names[0]),
+                )
+                .header("Content-Type", "application/octet-stream")
+                .body(decoded_bytes);
+
+            return Ok(response);
+        }
+    }
+
+    // ==== Kasus 2 atau 3: folder tunggal atau multiple file/folder ====
+    // --- Buat zip ---
+    let zip_name = if names.len() == 1 {
+        format!("{}.zip", names[0])
     } else {
-        // ==== Read file and encode base64 ====
-        let base64_cmd = match mt_server_type_id {
-            1 => format!(r#"base64 "{}/{}""#, dir_path, file_data.name),
-            2 => format!(
-                r#"powershell -Command "[Convert]::ToBase64String([IO.File]::ReadAllBytes('{}\{}'))""#,
-                dir_path, file_data.name
-            ),
-            _ => unreachable!(),
-        };
-
-        let output = run_ssh_command(&session, &base64_cmd)?;
-        (file_data.name.clone(), output)
+        "archive.zip".to_string()
     };
 
+    let zip_path = format!("{}/{}", dir_path, zip_name);
+
+    let zip_command = match mt_server_type_id {
+        1 => {
+            // "cd dir && zip -r zipname name1 name2 ..."
+            let joined_names = names.join("\" \"");
+            format!(
+                r#"cd "{}" && zip -r "{}" "{}""#,
+                dir_path, zip_name, joined_names
+            )
+        }
+        2 => {
+            // PowerShell Compress-Archive
+            let joined_paths: String = names
+                .iter()
+                .map(|n| format!("'{}\\{}'", dir_path, n))
+                .collect::<Vec<_>>()
+                .join(", ");
+
+            format!(
+                r#"powershell -Command "Compress-Archive -Path {} -DestinationPath '{}\{}' -Force""#,
+                joined_paths, dir_path, zip_name
+            )
+        }
+        _ => {
+            return Err(common::error_message(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "ssh.unknownServerType",
+            ));
+        }
+    };
+
+    run_ssh_command(&session, &zip_command)?;
+
+    // --- Encode zip sebagai base64 ---
+    let base64_cmd = match mt_server_type_id {
+        1 => format!(r#"base64 "{}""#, zip_path),
+        2 => format!(
+            r#"powershell -Command "[Convert]::ToBase64String([IO.File]::ReadAllBytes('{}\{}'))""#,
+            dir_path, zip_name
+        ),
+        _ => unreachable!(),
+    };
+
+    let output = run_ssh_command(&session, &base64_cmd)?;
+
     let decoded_bytes = base64::engine::general_purpose::STANDARD
-        .decode(base64_content.trim())
+        .decode(output.trim())
         .map_err(|_| {
             common::error_message(StatusCode::INTERNAL_SERVER_ERROR, "ssh.decodeBase64Failed")
         })?;
@@ -880,9 +933,9 @@ pub async fn download_entity(
         .status(StatusCode::OK)
         .header(
             "Content-Disposition",
-            format!("attachment; filename=\"{}\"", file_name),
+            format!(r#"attachment; filename="{}""#, zip_name),
         )
-        .header("Content-Type", "application/octet-stream")
+        .header("Content-Type", "application/zip")
         .body(decoded_bytes);
 
     Ok(response)
