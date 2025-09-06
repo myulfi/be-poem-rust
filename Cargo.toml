@@ -4,9 +4,11 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-poem = { version = "3.1.11", features = ["websocket"] }
+poem = { version = "3.1.11", features = ["websocket", "multipart"] }
 poem-openapi = { version = "5.1.2", features = ["swagger-ui"] }
 tokio = { version = "1", features = ["full"] }
+tokio-util = { version = "0.7", features = ["compat"] }
+tokio-stream = "0.1"
 sqlx = { version = "0.7", features = ["mysql", "postgres", "macros", "runtime-tokio-native-tls", "bigdecimal"] }
 diesel = { version = "2.0", features = ["postgres", "r2d2", "chrono", "numeric"] }
 dotenvy = "0.15"
@@ -29,3 +31,5 @@ regex = "1"
 umya-spreadsheet = "1.1"
 ssh2 = "0.9"
 tempfile = "3"
+url = "2.5"
+base64 = "0.21"

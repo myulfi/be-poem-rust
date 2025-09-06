@@ -15,7 +15,6 @@ use crate::utils::common::{self, generate_copy_name, is_valid_directory_path, is
 use base64::{Engine, engine::general_purpose};
 use chrono::Utc;
 use diesel::prelude::*;
-use futures::StreamExt;
 
 use poem::web::Multipart;
 use poem::web::Query;
@@ -842,14 +841,14 @@ pub async fn download_entity(
     use poem::{Body, Response};
     use tokio_util::io::ReaderStream;
 
-    let names: Vec<String> = file_data
+    let name_array: Vec<String> = file_data
         .name
         .split("||")
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
         .collect();
 
-    if names.is_empty() || names.iter().any(|n| !is_valid_filename(n)) {
+    if name_array.is_empty() || name_array.iter().any(|n| !is_valid_filename(n)) {
         return Err(common::error_message(
             StatusCode::BAD_REQUEST,
             "error.invalidFilename",
@@ -877,8 +876,7 @@ pub async fn download_entity(
         dir_path = format!("/{}", dir_path);
     }
 
-    // 🔍 Validasi semua nama
-    for name in &names {
+    for name in &name_array {
         let path = format!("{}/{}", dir_path, name);
         if !check_entity_exists(&session, mt_server_type_id, &path)? {
             return Err(common::error_message(
@@ -888,140 +886,114 @@ pub async fn download_entity(
         }
     }
 
-    let is_single = names.len() == 1;
-    let name = &names[0];
+    let zip_flag = name_array.len() > 1
+        || check_is_directory(
+            &session,
+            mt_server_type_id,
+            &format!("{}/{}", dir_path, &name_array[0]),
+        )?;
 
-    // 📦 Jika 1 nama dan itu file → langsung stream
-    if is_single {
-        let target_path = format!("{}/{}", dir_path, name);
-        let is_dir = check_is_directory(&session, mt_server_type_id, &target_path)?;
-        if !is_dir {
-            let cat_command = match mt_server_type_id {
-                1 => format!(r#"cat "{}""#, target_path),
-                2 => format!(
-                    r#"powershell -Command "Get-Content -Path '{}\{}' -Encoding Byte -ReadCount 0""#,
-                    dir_path, name
-                ),
+    let name = if zip_flag {
+        &format!(
+            "{}.{}",
+            if name_array.len() == 1 {
+                &name_array[0]
+            } else {
+                std::path::Path::new(&dir_path)
+                    .file_name()
+                    .unwrap()
+                    .to_str()
+                    .unwrap()
+            },
+            match mt_server_type_id {
+                1 => "tar.gz",
+                2 => "zip",
                 _ => {
                     return Err(common::error_message(
                         StatusCode::INTERNAL_SERVER_ERROR,
                         "ssh.unknownServerType",
                     ));
                 }
-            };
+            }
+        )
+    } else {
+        &name_array[0]
+    };
 
-            let stream = run_ssh_stream_command(&session, &cat_command).map_err(|_| {
-                common::error_message(StatusCode::INTERNAL_SERVER_ERROR, "ssh.streamFailed")
-            })?;
+    let temp_name = if zip_flag {
+        format!("{}_{}", Utc::now().format("%Y%m%d%H%M%S").to_string(), name)
+    } else {
+        name.to_string()
+    };
 
-            let byte_stream = ReaderStream::new(stream).map(|res| {
-                res.map(Bytes::from)
-                    .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
-            });
-
-            let body = Body::from_bytes_stream(byte_stream);
-            let response = Response::builder()
-                .status(StatusCode::OK)
-                .header(
-                    "Content-Disposition",
-                    format!(r#"attachment; filename="{}""#, name),
+    if zip_flag {
+        let zip_command = match mt_server_type_id {
+            1 => {
+                let quoted_names = name_array.join("\" \"");
+                format!(
+                    r#"cd "{}" && tar -czf "{}" "{}""#,
+                    dir_path, temp_name, quoted_names
                 )
-                .header("Content-Type", "application/octet-stream")
-                .body(body);
-            return Ok(response);
-        }
+            }
+            2 => {
+                let paths = name_array
+                    .iter()
+                    .map(|n| format!(r#"'{}\{}'"#, dir_path, n))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!(
+                    r#"powershell -Command "Compress-Archive -Path {} -DestinationPath '{}\{}' -Force""#,
+                    paths, dir_path, temp_name
+                )
+            }
+            _ => {
+                return Err(common::error_message(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "ssh.unknownServerType",
+                ));
+            }
+        };
+        run_ssh_command(&session, &zip_command)?;
     }
 
-    let extension = match mt_server_type_id {
-        1 => "tar.gz",
-        2 => "zip",
-        _ => {
-            return Err(common::error_message(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "ssh.unknownServerType",
-            ));
-        }
-    };
-
-    // 📦 Jika folder atau multiple file/folder → buat ZIP dulu
-    let timestamp = Utc::now().format("%Y%m%d%H%M%S").to_string();
-    let zip_name = if is_single {
-        name
-    } else {
-        std::path::Path::new(&dir_path)
-            .file_name()
-            .unwrap()
-            .to_str()
-            .unwrap()
-    };
-
-    let zip_temp_name = format!("{}_{}.{}", zip_name, timestamp, extension);
-
-    let zip_command = match mt_server_type_id {
-        1 => {
-            let quoted_names = names.join("\" \"");
-            format!(
-                r#"cd "{}" && tar -czf "{}" "{}""#,
-                dir_path, zip_temp_name, quoted_names
-            )
-        }
-        2 => {
-            let paths = names
-                .iter()
-                .map(|n| format!(r#"'{}\{}'"#, dir_path, n))
-                .collect::<Vec<_>>()
-                .join(", ");
-            format!(
-                r#"powershell -Command "Compress-Archive -Path {} -DestinationPath '{}\{}' -Force""#,
-                paths, dir_path, zip_temp_name
-            )
-        }
-        _ => {
-            return Err(common::error_message(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "ssh.unknownServerType",
-            ));
-        }
-    };
-
-    // Buat ZIP file
-    run_ssh_command(&session, &zip_command)?;
-
-    // 🔄 Stream ZIP file
     let cat_command = match mt_server_type_id {
-        1 => format!(r#"cat "{}/{}""#, dir_path, zip_temp_name),
+        1 => format!(r#"cat "{}/{}""#, dir_path, temp_name),
         2 => format!(
             r#"powershell -Command "Get-Content -Path '{}\{}' -Encoding Byte -ReadCount 0""#,
-            dir_path, zip_temp_name
+            dir_path, temp_name
         ),
-        _ => unreachable!(),
+        _ => {
+            return Err(common::error_message(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "ssh.unknownServerType",
+            ));
+        }
     };
 
     let stream = run_ssh_stream_command(&session, &cat_command).map_err(|_| {
         common::error_message(StatusCode::INTERNAL_SERVER_ERROR, "ssh.streamFailed")
     })?;
 
-    // 🧼 Hapus ZIP setelah dibuat
-    let cleanup_command = match mt_server_type_id {
-        1 => format!(r#"rm -f "{}/{}""#, dir_path, zip_temp_name),
-        2 => format!(
-            r#"powershell -Command "Remove-Item -Path '{}\{}' -Force""#,
-            dir_path, zip_temp_name
-        ),
-        _ => String::new(),
-    };
-
-    // Jalankan cleanup (tidak masalah kalau error)
-    let _ = run_ssh_command(&session, &cleanup_command);
+    if zip_flag {
+        let cleanup_command = match mt_server_type_id {
+            1 => format!(r#"rm -f "{}/{}""#, dir_path, temp_name),
+            2 => format!(
+                r#"powershell -Command "Remove-Item -Path '{}\{}' -Force""#,
+                dir_path, temp_name
+            ),
+            _ => String::new(),
+        };
+        run_ssh_command(&session, &cleanup_command)?;
+    }
 
     let body = Body::from_bytes_stream(ReaderStream::new(stream));
     let response = Response::builder()
         .status(StatusCode::OK)
         .header(
             "Content-Disposition",
-            format!(r#"attachment; filename="{}.{}""#, zip_name, extension),
+            format!(r#"attachment; filename="{}""#, name),
         )
-        .header("Content-Type", "application/zip")
+        .header("Content-Type", "application/octet-stream")
         .body(body);
 
     Ok(response)
