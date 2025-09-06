@@ -62,10 +62,10 @@ async fn main() -> Result<()> {
     let addr = SocketAddr::from(([127, 0, 0, 1], port));
 
     let cors = Cors::new()
-    // .allow_origin("http://localhost:5173")
-    // .allow_methods([Method::GET, Method::POST])
-    // .allow_headers(["Authorization", "Content-Type"])
-    ;
+        // .allow_origin("http://localhost:5173")
+        // .allow_methods([Method::GET, Method::POST])
+        // .allow_headers(["Authorization", "Content-Type"])
+        .expose_headers(["Content-Disposition"]);
 
     let app = Route::new()
         .at("", get(hello))

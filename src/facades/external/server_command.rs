@@ -13,7 +13,9 @@ use crate::models::external::server::{
 use crate::schema::tbl_ext_server;
 use crate::utils::common::{self, generate_copy_name, is_valid_directory_path, is_valid_filename};
 use base64::{Engine, engine::general_purpose};
+use chrono::Utc;
 use diesel::prelude::*;
+use futures::StreamExt;
 
 use poem::web::Multipart;
 use poem::web::Query;
@@ -28,6 +30,12 @@ use poem::{
 };
 
 use tempfile::NamedTempFile;
+use tokio::io::AsyncRead;
+use tokio::io::{self};
+use tokio::sync::mpsc;
+use tokio_stream::wrappers::ReceiverStream;
+use tokio_util::bytes::Bytes;
+use tokio_util::io::StreamReader;
 
 #[derive(Deserialize)]
 struct DirectoryPagination {
@@ -223,7 +231,6 @@ pub fn start_ssh_tunnel(
         ));
     };
 
-    // println!("Temp file path: {:?}", temp_file.path());
     thread::sleep(Duration::from_millis(2000));
     Ok((child, local_port))
 }
@@ -243,6 +250,55 @@ fn run_ssh_command(session: &Session, command: &str) -> Result<String, poem::Err
         .map_err(|_| common::error_message(StatusCode::INTERNAL_SERVER_ERROR, "ssh.readFailed"))?;
     channel.wait_close().ok();
     Ok(output)
+}
+
+pub fn run_ssh_stream_command(
+    session: &Session,
+    command: &str,
+) -> io::Result<impl AsyncRead + Unpin + Send + 'static> {
+    // Setup SSH channel and exec command
+    let mut channel = session
+        .channel_session()
+        .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+
+    channel
+        .exec(command)
+        .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+
+    // Get blocking stdout reader
+    let mut stdout = channel.stream(0);
+
+    // Channel for async streaming
+    let (tx, rx) = mpsc::channel::<Result<Bytes, io::Error>>(16);
+
+    // Spawn blocking thread to read from stdout
+    std::thread::spawn(move || {
+        let mut buf = [0u8; 8192];
+        loop {
+            match stdout.read(&mut buf) {
+                Ok(0) => break, // EOF
+                Ok(n) => {
+                    // Send bytes to async channel
+                    if tx
+                        .blocking_send(Ok(Bytes::copy_from_slice(&buf[..n])))
+                        .is_err()
+                    {
+                        break;
+                    }
+                }
+                Err(e) => {
+                    let _ = tx.blocking_send(Err(e));
+                    break;
+                }
+            }
+        }
+    });
+
+    // Wrap ReceiverStream as AsyncRead
+    let stream = ReceiverStream::new(rx);
+    let async_reader = StreamReader::new(stream);
+
+    Ok(async_reader)
 }
 
 #[derive(Debug, Serialize)]
@@ -783,6 +839,9 @@ pub async fn download_entity(
     Path(ext_server_id): Path<i16>,
     Query(file_data): Query<FileData>,
 ) -> Result<impl IntoResponse> {
+    use poem::{Body, Response};
+    use tokio_util::io::ReaderStream;
+
     let names: Vec<String> = file_data
         .name
         .split("||")
@@ -818,7 +877,7 @@ pub async fn download_entity(
         dir_path = format!("/{}", dir_path);
     }
 
-    // ==== Cek keberadaan semua nama ====
+    // 🔍 Validasi semua nama
     for name in &names {
         let path = format!("{}/{}", dir_path, name);
         if !check_entity_exists(&session, mt_server_type_id, &path)? {
@@ -829,76 +888,92 @@ pub async fn download_entity(
         }
     }
 
-    // ==== Kasus 1: hanya 1 nama, dan itu file ====
-    if names.len() == 1 {
-        let target_path = format!("{}/{}", dir_path, names[0]);
-        let is_dir = check_is_directory(&session, mt_server_type_id, &target_path)?;
+    let is_single = names.len() == 1;
+    let name = &names[0];
 
+    // 📦 Jika 1 nama dan itu file → langsung stream
+    if is_single {
+        let target_path = format!("{}/{}", dir_path, name);
+        let is_dir = check_is_directory(&session, mt_server_type_id, &target_path)?;
         if !is_dir {
-            // --- Encode file sebagai base64 ---
-            let base64_cmd = match mt_server_type_id {
-                1 => format!(r#"base64 "{}""#, target_path),
+            let cat_command = match mt_server_type_id {
+                1 => format!(r#"cat "{}""#, target_path),
                 2 => format!(
-                    r#"powershell -Command "[Convert]::ToBase64String([IO.File]::ReadAllBytes('{}\{}'))""#,
-                    dir_path, names[0]
+                    r#"powershell -Command "Get-Content -Path '{}\{}' -Encoding Byte -ReadCount 0""#,
+                    dir_path, name
                 ),
-                _ => unreachable!(),
+                _ => {
+                    return Err(common::error_message(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        "ssh.unknownServerType",
+                    ));
+                }
             };
 
-            let output = run_ssh_command(&session, &base64_cmd)?;
+            let stream = run_ssh_stream_command(&session, &cat_command).map_err(|_| {
+                common::error_message(StatusCode::INTERNAL_SERVER_ERROR, "ssh.streamFailed")
+            })?;
 
-            let decoded_bytes = base64::engine::general_purpose::STANDARD
-                .decode(output.trim())
-                .map_err(|_| {
-                    common::error_message(
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        "ssh.decodeBase64Failed",
-                    )
-                })?;
+            let byte_stream = ReaderStream::new(stream).map(|res| {
+                res.map(Bytes::from)
+                    .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
+            });
 
-            let response = poem::Response::builder()
+            let body = Body::from_bytes_stream(byte_stream);
+            let response = Response::builder()
                 .status(StatusCode::OK)
                 .header(
                     "Content-Disposition",
-                    format!(r#"attachment; filename="{}""#, names[0]),
+                    format!(r#"attachment; filename="{}""#, name),
                 )
                 .header("Content-Type", "application/octet-stream")
-                .body(decoded_bytes);
-
+                .body(body);
             return Ok(response);
         }
     }
 
-    // ==== Kasus 2 atau 3: folder tunggal atau multiple file/folder ====
-    // --- Buat zip ---
-    let zip_name = if names.len() == 1 {
-        format!("{}.zip", names[0])
-    } else {
-        "archive.zip".to_string()
+    let extension = match mt_server_type_id {
+        1 => "tar.gz",
+        2 => "zip",
+        _ => {
+            return Err(common::error_message(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "ssh.unknownServerType",
+            ));
+        }
     };
 
-    let zip_path = format!("{}/{}", dir_path, zip_name);
+    // 📦 Jika folder atau multiple file/folder → buat ZIP dulu
+    let timestamp = Utc::now().format("%Y%m%d%H%M%S").to_string();
+    let zip_name = if is_single {
+        name
+    } else {
+        std::path::Path::new(&dir_path)
+            .file_name()
+            .unwrap()
+            .to_str()
+            .unwrap()
+    };
+
+    let zip_temp_name = format!("{}_{}.{}", zip_name, timestamp, extension);
 
     let zip_command = match mt_server_type_id {
         1 => {
-            // "cd dir && zip -r zipname name1 name2 ..."
-            let joined_names = names.join("\" \"");
+            let quoted_names = names.join("\" \"");
             format!(
-                r#"cd "{}" && zip -r "{}" "{}""#,
-                dir_path, zip_name, joined_names
+                r#"cd "{}" && tar -czf "{}" "{}""#,
+                dir_path, zip_temp_name, quoted_names
             )
         }
         2 => {
-            // PowerShell Compress-Archive
-            let joined_paths: String = names
+            let paths = names
                 .iter()
-                .map(|n| format!("'{}\\{}'", dir_path, n))
+                .map(|n| format!(r#"'{}\{}'"#, dir_path, n))
                 .collect::<Vec<_>>()
                 .join(", ");
-
             format!(
                 r#"powershell -Command "Compress-Archive -Path {} -DestinationPath '{}\{}' -Force""#,
-                joined_paths, dir_path, zip_name
+                paths, dir_path, zip_temp_name
             )
         }
         _ => {
@@ -909,34 +984,45 @@ pub async fn download_entity(
         }
     };
 
+    // Buat ZIP file
     run_ssh_command(&session, &zip_command)?;
 
-    // --- Encode zip sebagai base64 ---
-    let base64_cmd = match mt_server_type_id {
-        1 => format!(r#"base64 "{}""#, zip_path),
+    // 🔄 Stream ZIP file
+    let cat_command = match mt_server_type_id {
+        1 => format!(r#"cat "{}/{}""#, dir_path, zip_temp_name),
         2 => format!(
-            r#"powershell -Command "[Convert]::ToBase64String([IO.File]::ReadAllBytes('{}\{}'))""#,
-            dir_path, zip_name
+            r#"powershell -Command "Get-Content -Path '{}\{}' -Encoding Byte -ReadCount 0""#,
+            dir_path, zip_temp_name
         ),
         _ => unreachable!(),
     };
 
-    let output = run_ssh_command(&session, &base64_cmd)?;
+    let stream = run_ssh_stream_command(&session, &cat_command).map_err(|_| {
+        common::error_message(StatusCode::INTERNAL_SERVER_ERROR, "ssh.streamFailed")
+    })?;
 
-    let decoded_bytes = base64::engine::general_purpose::STANDARD
-        .decode(output.trim())
-        .map_err(|_| {
-            common::error_message(StatusCode::INTERNAL_SERVER_ERROR, "ssh.decodeBase64Failed")
-        })?;
+    // 🧼 Hapus ZIP setelah dibuat
+    let cleanup_command = match mt_server_type_id {
+        1 => format!(r#"rm -f "{}/{}""#, dir_path, zip_temp_name),
+        2 => format!(
+            r#"powershell -Command "Remove-Item -Path '{}\{}' -Force""#,
+            dir_path, zip_temp_name
+        ),
+        _ => String::new(),
+    };
 
-    let response = poem::Response::builder()
+    // Jalankan cleanup (tidak masalah kalau error)
+    let _ = run_ssh_command(&session, &cleanup_command);
+
+    let body = Body::from_bytes_stream(ReaderStream::new(stream));
+    let response = Response::builder()
         .status(StatusCode::OK)
         .header(
             "Content-Disposition",
-            format!(r#"attachment; filename="{}""#, zip_name),
+            format!(r#"attachment; filename="{}.{}""#, zip_name, extension),
         )
         .header("Content-Type", "application/zip")
-        .body(decoded_bytes);
+        .body(body);
 
     Ok(response)
 }
@@ -1235,7 +1321,6 @@ pub async fn clone_entity(
                 &format!("{}/{}", dir_path, new_name),
             )?;
 
-            // println!("{}", format!("{} : {}/{}", exists, dir_path, new_name));
             if exists {
                 new_name = generate_copy_name(&new_name);
             } else {
