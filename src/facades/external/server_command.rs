@@ -12,8 +12,10 @@ use crate::models::external::server::{
 };
 use crate::schema::tbl_ext_server;
 use crate::utils::common::{self, generate_copy_name, is_valid_directory_path, is_valid_filename};
+use base64::{Engine, engine::general_purpose};
 use diesel::prelude::*;
 
+use poem::web::Multipart;
 use poem::web::Query;
 use serde::{Deserialize, Serialize};
 use serde_json::json as json_marco;
@@ -566,6 +568,29 @@ fn check_entity_exists(
     Ok(exists)
 }
 
+fn check_is_directory(
+    session: &Session,
+    mt_server_type_id: i16,
+    path: &str,
+) -> Result<bool, poem::Error> {
+    let command = match mt_server_type_id {
+        1 => format!(r#"[ -d "{}" ] && echo "true" || echo "false""#, path),
+        2 => format!(
+            r#"powershell -Command "(Test-Path '{}' -PathType Container)""#,
+            path
+        ),
+        _ => {
+            return Err(common::error_message(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "ssh.unknownServerType",
+            ));
+        }
+    };
+
+    let output = run_ssh_command(session, &command)?;
+    Ok(output.trim().eq_ignore_ascii_case("true"))
+}
+
 #[handler]
 pub async fn add_folder(
     pool: Data<&DbPool>,
@@ -603,12 +628,86 @@ pub async fn add_folder(
     if !entity_exists {
         let command = format!(r#"mkdir "{}/{}""#, dir_path, entry_ext_server_directory.nm);
         run_ssh_command(&session, &command)?;
-        Ok(StatusCode::NO_CONTENT)
+        Ok(StatusCode::CREATED)
     } else {
         Err(common::error_message(
             StatusCode::CONFLICT,
             "ssh.alreadyExists",
         ))
+    }
+}
+
+#[handler]
+pub async fn rename_entity(
+    pool: Data<&DbPool>,
+    _: crate::auth::middleware::JwtAuth,
+    Path(ext_server_id): Path<i16>,
+    Json(entry_ext_server_directory): Json<EntryExternalServerDirectory>,
+) -> Result<impl IntoResponse> {
+    let mut dir_path = entry_ext_server_directory.dir.join("/");
+    if !is_valid_directory_path(&dir_path) {
+        return Err(common::error_message(
+            StatusCode::BAD_REQUEST,
+            "error.invalidDirectory",
+        ));
+    }
+
+    let conn = &mut pool.get().map_err(|_| {
+        common::error_message(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "information.connectionFailed",
+        )
+    })?;
+
+    let (session, mt_server_type_id) = create_ssh_session(conn, ext_server_id)?;
+
+    if mt_server_type_id == 1 && !dir_path.starts_with('/') {
+        dir_path = format!("/{}", dir_path);
+    }
+
+    let entity_exists = check_entity_exists(
+        &session,
+        mt_server_type_id,
+        &format!("{}/{}", dir_path, entry_ext_server_directory.old_nm),
+    )?;
+
+    if entity_exists && entry_ext_server_directory.old_nm.len() > 0 {
+        let entity_exists = check_entity_exists(
+            &session,
+            mt_server_type_id,
+            &format!("{}/{}", dir_path, entry_ext_server_directory.nm),
+        )?;
+
+        if !entity_exists {
+            let command = match mt_server_type_id {
+                1 => format!(
+                    "mv \"{}\" \"{}\"",
+                    &format!("{}/{}", dir_path, entry_ext_server_directory.old_nm),
+                    &format!("{}/{}", dir_path, entry_ext_server_directory.nm)
+                ),
+                2 => format!(
+                    "powershell -Command \"Rename-Item -Path '{}' -NewName '{}'\"",
+                    &format!("{}/{}", dir_path, entry_ext_server_directory.old_nm),
+                    &format!("{}/{}", dir_path, entry_ext_server_directory.nm)
+                ),
+                _ => {
+                    return Err(common::error_message(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        "ssh.unknownServerType",
+                    ));
+                }
+            };
+
+            run_ssh_command(&session, &command)?;
+            Ok(StatusCode::NO_CONTENT)
+        } else {
+            Err(common::error_message(
+                StatusCode::CONFLICT,
+                "ssh.fileAlreadyExist",
+            ))
+        }
+    } else {
+        Err(poem::Error::from_status(StatusCode::NOT_FOUND))
     }
 }
 
@@ -675,6 +774,118 @@ pub async fn get_file(
     } else {
         Err(poem::Error::from_status(StatusCode::NOT_FOUND))
     }
+}
+
+#[handler]
+pub async fn download_entity(
+    pool: Data<&DbPool>,
+    _: crate::auth::middleware::JwtAuth,
+    Path(ext_server_id): Path<i16>,
+    Query(file_data): Query<FileData>,
+) -> Result<impl IntoResponse> {
+    if !is_valid_filename(&file_data.name) {
+        return Err(common::error_message(
+            StatusCode::BAD_REQUEST,
+            "error.invalidFilename",
+        ));
+    }
+
+    let mut dir_path = file_data.directory;
+    if !is_valid_directory_path(&dir_path) {
+        return Err(common::error_message(
+            StatusCode::BAD_REQUEST,
+            "error.invalidDirectory",
+        ));
+    }
+
+    let conn = &mut pool.get().map_err(|_| {
+        common::error_message(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "information.connectionFailed",
+        )
+    })?;
+
+    let (session, mt_server_type_id) = create_ssh_session(conn, ext_server_id)?;
+
+    if mt_server_type_id == 1 && !dir_path.starts_with('/') {
+        dir_path = format!("/{}", dir_path);
+    }
+
+    let target_path = format!("{}/{}", dir_path, file_data.name);
+
+    let entity_exists = check_entity_exists(&session, mt_server_type_id, &target_path)?;
+    if !entity_exists {
+        return Err(poem::Error::from_status(StatusCode::NOT_FOUND));
+    }
+
+    let is_dir = check_is_directory(&session, mt_server_type_id, &target_path)?;
+
+    let (file_name, base64_content) = if is_dir {
+        // ==== ZIP folder ====
+        let zip_name = format!("{}.zip", file_data.name);
+        let zip_path = format!("{}/{}", dir_path, zip_name);
+
+        let command = match mt_server_type_id {
+            1 => format!(
+                r#"cd "{}" && zip -r "{}" "{}""#,
+                dir_path, zip_name, file_data.name
+            ),
+            2 => format!(
+                r#"powershell -Command "Compress-Archive -Path '{}\{}' -DestinationPath '{}\{}'"#,
+                dir_path, file_data.name, dir_path, zip_name
+            ),
+            _ => {
+                return Err(common::error_message(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "ssh.unknownServerType",
+                ));
+            }
+        };
+        run_ssh_command(&session, &command)?;
+
+        // Read the zipped content and encode base64
+        let base64_cmd = match mt_server_type_id {
+            1 => format!(r#"base64 "{}/{}""#, dir_path, zip_name),
+            2 => format!(
+                r#"powershell -Command "[Convert]::ToBase64String([IO.File]::ReadAllBytes('{}\{}'))""#,
+                dir_path, zip_name
+            ),
+            _ => unreachable!(),
+        };
+
+        let output = run_ssh_command(&session, &base64_cmd)?;
+        (zip_name, output)
+    } else {
+        // ==== Read file and encode base64 ====
+        let base64_cmd = match mt_server_type_id {
+            1 => format!(r#"base64 "{}/{}""#, dir_path, file_data.name),
+            2 => format!(
+                r#"powershell -Command "[Convert]::ToBase64String([IO.File]::ReadAllBytes('{}\{}'))""#,
+                dir_path, file_data.name
+            ),
+            _ => unreachable!(),
+        };
+
+        let output = run_ssh_command(&session, &base64_cmd)?;
+        (file_data.name.clone(), output)
+    };
+
+    let decoded_bytes = base64::engine::general_purpose::STANDARD
+        .decode(base64_content.trim())
+        .map_err(|_| {
+            common::error_message(StatusCode::INTERNAL_SERVER_ERROR, "ssh.decodeBase64Failed")
+        })?;
+
+    let response = poem::Response::builder()
+        .status(StatusCode::OK)
+        .header(
+            "Content-Disposition",
+            format!("attachment; filename=\"{}\"", file_name),
+        )
+        .header("Content-Type", "application/octet-stream")
+        .body(decoded_bytes);
+
+    Ok(response)
 }
 
 #[handler]
@@ -745,7 +956,7 @@ pub async fn add_file(
         };
 
         let output = run_ssh_command(&session, &command)?;
-        Ok(StatusCode::NO_CONTENT)
+        Ok(StatusCode::CREATED)
     } else {
         Err(common::error_message(
             StatusCode::CONFLICT,
@@ -826,6 +1037,111 @@ pub async fn update_file(
     } else {
         Err(poem::Error::from_status(StatusCode::NOT_FOUND))
     }
+}
+
+#[handler]
+pub async fn upload_files(
+    pool: Data<&DbPool>,
+    _: crate::auth::middleware::JwtAuth,
+    Path(ext_server_id): Path<i16>,
+    mut multipart: Multipart,
+) -> Result<impl IntoResponse> {
+    let mut dir_array: Vec<String> = Vec::new();
+    let mut file_array: Vec<(String, Vec<u8>)> = Vec::new();
+
+    while let Some(field) = multipart.next_field().await? {
+        let name = field.name().unwrap_or("").to_string();
+
+        if name == "directory" {
+            dir_array.push(field.text().await?.to_string());
+        } else if name == "files" {
+            if let Some(file_name) = field.file_name().map(|s| s.to_string()) {
+                let data = field.bytes().await?.to_vec();
+                file_array.push((file_name, data));
+            }
+        }
+    }
+
+    let mut dir_path = dir_array.join("/");
+    if !is_valid_directory_path(&dir_path) {
+        return Err(common::error_message(
+            StatusCode::BAD_REQUEST,
+            "error.invalidDirectory",
+        ));
+    }
+
+    let conn = &mut pool.get().map_err(|_| {
+        common::error_message(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "information.connectionFailed",
+        )
+    })?;
+
+    let (session, mt_server_type_id) = create_ssh_session(conn, ext_server_id)?;
+
+    if mt_server_type_id == 1 && !dir_path.starts_with('/') {
+        dir_path = format!("/{}", dir_path);
+    }
+
+    for (file_name, content) in file_array {
+        let mut new_name = file_name.to_string();
+
+        loop {
+            let exists = check_entity_exists(
+                &session,
+                mt_server_type_id,
+                &format!("{}/{}", dir_path, new_name),
+            )?;
+
+            if exists {
+                new_name = generate_copy_name(&new_name);
+            } else {
+                match mt_server_type_id {
+                    1 => {
+                        let mut remote_file = session
+                            .scp_send(
+                                std::path::Path::new(&format!("{}/{}", dir_path, new_name)),
+                                0o644,
+                                content.len() as u64,
+                                None,
+                            )
+                            .map_err(|_| {
+                                common::error_message(
+                                    StatusCode::INTERNAL_SERVER_ERROR,
+                                    "ssh.uploadFailed",
+                                )
+                            })?;
+
+                        remote_file.write_all(&content).map_err(|_| {
+                            common::error_message(
+                                StatusCode::INTERNAL_SERVER_ERROR,
+                                "ssh.writeFailed",
+                            )
+                        })?;
+                    }
+                    2 => {
+                        let base64_str = general_purpose::STANDARD.encode(content);
+                        let command = format!(
+                            "$data = \"{}\"; [IO.File]::WriteAllBytes(\"{}\", [Convert]::FromBase64String($data))",
+                            base64_str,
+                            &format!("{}/{}", dir_path, new_name)
+                        );
+
+                        run_ssh_command(&session, &command)?;
+                    }
+                    _ => {
+                        return Err(common::error_message(
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            "ssh.unknownServerType",
+                        ));
+                    }
+                };
+                break;
+            }
+        }
+    }
+
+    Ok(StatusCode::NO_CONTENT)
 }
 
 #[handler]

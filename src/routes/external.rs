@@ -85,12 +85,20 @@ pub fn routes() -> Route {
         )
         .at("/:id/server-connect.json", get(server_command::connect))
         .at("/:id/server-directory.json", get(server_command::directory_list))
-        .at("/:id/server-folder.json", post(server_command::add_folder))
+        .at("/:id/server-entity.json", 
+        post(server_command::add_folder)
+            .get(server_command::download_entity)
+            .patch(server_command::rename_entity)
+        )
         .at(
             "/:id/server-file.json", 
             get(server_command::get_file)
             .post(server_command::add_file)
             .patch(server_command::update_file)
+        )
+        .at(
+            "/:id/server-file-upload.json", 
+            post(server_command::upload_files)
         )
         .at(
             "/:id/server-entity-clone.json", 

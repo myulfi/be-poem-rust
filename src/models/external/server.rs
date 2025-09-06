@@ -68,6 +68,8 @@ pub struct EntryExternalServerDirectory {
         message = "Name must be between 1 and 20 characters"
     ))]
     pub nm: String,
+    #[serde(rename = "oldName")]
+    pub old_nm: String,
     #[serde(rename = "directory")]
     #[validate(length(min = 1, message = "Directory must have at least one item"))]
     pub dir: Vec<String>,
