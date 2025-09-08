@@ -7,13 +7,13 @@ use validator_derive::Validate;
 #[serde(rename_all = "camelCase")]
 #[diesel(table_name = crate::schema::tbl_ext_database)]
 pub struct ExternalDatabase {
-    pub id: i16,
+    pub id: i64,
     #[serde(rename = "code")]
     pub cd: String,
     #[serde(rename = "description")]
     pub dscp: Option<String>,
     #[serde(rename = "externalServerId")]
-    pub ext_server_id: i16,
+    pub ext_server_id: Option<i64>,
     #[serde(rename = "databaseTypeId")]
     pub mt_database_type_id: i16,
     pub ip: String,
@@ -54,7 +54,7 @@ pub struct EntryExternalDatabase {
     #[serde(rename = "description")]
     pub dscp: Option<String>,
     #[serde(rename = "externalServerId")]
-    pub ext_server_id: i16,
+    pub ext_server_id: Option<i64>,
     #[serde(rename = "databaseTypeId")]
     #[validate(range(min = 1, message = "Type must be filled"))]
     pub mt_database_type_id: i16,
@@ -86,7 +86,7 @@ pub struct ExternalDatabaseQuery {
     #[serde(rename = "description")]
     pub dscp: Option<String>,
     #[serde(rename = "externalDatabaseId")]
-    pub ext_database_id: i16,
+    pub ext_database_id: i64,
     pub query: String,
     #[serde(rename = "deletedFlag")]
     pub is_del: i16,
@@ -105,7 +105,7 @@ pub struct ExternalDatabaseQuery {
 pub struct QueryManual {
     pub id: i64,
     #[serde(rename = "externalDatabaseId")]
-    pub ext_database_id: i16,
+    pub ext_database_id: i64,
     pub query: String,
     pub created_by: String,
     #[serde(rename = "createdDate")]

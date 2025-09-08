@@ -95,10 +95,10 @@ table! {
 
 table! {
     tbl_ext_database (id) {
-        id -> SmallInt,
+        id -> BigInt,
         cd -> Varchar,
         dscp -> Nullable<Varchar>,
-        ext_server_id -> SmallInt,
+        ext_server_id -> Nullable<BigInt>,
         mt_database_type_id -> SmallInt,
         ip -> Varchar,
         port -> SmallInt,
@@ -121,7 +121,7 @@ table! {
     tbl_ext_database_query (id) {
         id -> BigInt,
         dscp -> Nullable<Varchar>,
-        ext_database_id -> SmallInt,
+        ext_database_id -> BigInt,
         query -> Varchar,
         is_del -> SmallInt,
         created_by -> Varchar,
@@ -135,7 +135,7 @@ table! {
 table! {
     tbl_query_manual (id) {
         id -> BigInt,
-        ext_database_id -> SmallInt,
+        ext_database_id -> BigInt,
         query -> Varchar,
         created_by -> Varchar,
         dt_created -> Timestamp,
@@ -161,7 +161,7 @@ table! {
 
 table! {
     tbl_ext_server (id) {
-        id -> SmallInt,
+        id -> BigInt,
         cd -> Varchar,
         dscp -> Nullable<Varchar>,
         mt_server_type_id -> SmallInt,
@@ -182,9 +182,46 @@ table! {
 
 table! {
     tbl_ext_api (id) {
-        id -> SmallInt,
+        id -> BigInt,
         nm -> Varchar,
         dscp -> Nullable<Varchar>,
+        authz -> Nullable<Varchar>,
+        is_del -> SmallInt,
+        created_by -> Varchar,
+        dt_created -> Timestamp,
+        updated_by -> Nullable<Varchar>,
+        dt_updated -> Nullable<Timestamp>,
+        version -> SmallInt,
+    }
+}
+
+table! {
+    tbl_ext_api_var (id) {
+        id -> BigInt,
+        seq -> SmallInt,
+        ext_api_id -> BigInt,
+        key -> Varchar,
+        val -> Nullable<Varchar>,
+        is_del -> SmallInt,
+        created_by -> Varchar,
+        dt_created -> Timestamp,
+        updated_by -> Nullable<Varchar>,
+        dt_updated -> Nullable<Timestamp>,
+        version -> SmallInt,
+    }
+}
+
+table! {
+    tbl_ext_api_req (id) {
+        id -> BigInt,
+        seq -> SmallInt,
+        nm -> Varchar,
+        ext_api_id -> BigInt,
+        parent_id -> BigInt,
+        mt_http_method_id -> SmallInt,
+        path -> Nullable<Varchar>,
+        is_have_authz -> SmallInt,
+        body -> Nullable<Varchar>,
         is_del -> SmallInt,
         created_by -> Varchar,
         dt_created -> Timestamp,

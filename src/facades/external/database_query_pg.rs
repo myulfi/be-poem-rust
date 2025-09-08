@@ -28,7 +28,7 @@ use tokio_postgres::types::Oid;
 
 fn get_ext_database_info(
     conn: &mut PgConnection,
-    ext_database_id: i16,
+    ext_database_id: i64,
 ) -> poem::Result<(String, String)> {
     let (ip, port, username, password, db_name, mt_database_type_id): (
         String,
@@ -90,7 +90,7 @@ async fn get_query_manual_client(
     conn: &mut PgConnection,
     query_manual_id: i64,
 ) -> poem::Result<(Client, String)> {
-    let (ext_database_id, query_str): (i16, String) = tbl_query_manual::table
+    let (ext_database_id, query_str): (i64, String) = tbl_query_manual::table
         .filter(tbl_query_manual::id.eq(query_manual_id))
         .select((tbl_query_manual::ext_database_id, tbl_query_manual::query))
         .first(conn)
@@ -114,7 +114,7 @@ async fn get_query_manual_row(
 
 async fn get_external_pg_client(
     conn: &mut PgConnection,
-    ext_database_id: i16,
+    ext_database_id: i64,
 ) -> poem::Result<(Client, String)> {
     let (url, pagination) = get_ext_database_info(conn, ext_database_id)?;
     let client = connect_to_external_database(&url).await?;
@@ -166,7 +166,7 @@ async fn query_with_pagination(
 pub async fn connect(
     pool: poem::web::Data<&DbPool>,
     _: crate::auth::middleware::JwtAuth,
-    Path(ext_database_id): Path<i16>,
+    Path(ext_database_id): Path<i64>,
 ) -> poem::Result<impl IntoResponse> {
     let conn = &mut pool.get().map_err(|_| {
         common::error_message(
@@ -183,7 +183,7 @@ pub async fn connect(
 pub async fn query_object_list(
     pool: poem::web::Data<&DbPool>,
     _: crate::auth::middleware::JwtAuth,
-    Path(ext_database_id): Path<i16>,
+    Path(ext_database_id): Path<i64>,
     Query(pagination): Query<Pagination>,
 ) -> poem::Result<impl IntoResponse> {
     let (start, length) = parse_pagination(&pagination);
@@ -245,7 +245,7 @@ pub async fn query_object_list(
 pub fn query_whitelist_list(
     pool: poem::web::Data<&DbPool>,
     _: crate::auth::middleware::JwtAuth,
-    Path(ext_database_id): Path<i16>,
+    Path(ext_database_id): Path<i64>,
     Query(pagination): Query<Pagination>,
 ) -> poem::Result<impl IntoResponse> {
     let (start, length) = parse_pagination(&pagination);
@@ -317,7 +317,7 @@ pub fn query_whitelist_list(
 pub async fn query_manual_run(
     pool: poem::web::Data<&DbPool>,
     jwt_auth: crate::auth::middleware::JwtAuth,
-    Path(ext_database_id): Path<i16>,
+    Path(ext_database_id): Path<i64>,
     Json(mut entry_manual_ext_database): Json<EntryQueryManual>,
 ) -> poem::Result<impl IntoResponse> {
     let conn = &mut pool.get().map_err(|_| {
@@ -735,7 +735,7 @@ pub async fn query_manual_xml(
 pub async fn query_exact_object_run(
     pool: poem::web::Data<&DbPool>,
     _: crate::auth::middleware::JwtAuth,
-    Path((ext_database_id, entity_name)): Path<(i16, String)>,
+    Path((ext_database_id, entity_name)): Path<(i64, String)>,
 ) -> poem::Result<impl IntoResponse> {
     let conn = &mut pool.get().map_err(|_| {
         common::error_message(
@@ -764,7 +764,7 @@ pub async fn query_exact_object_run(
 pub async fn query_exact_object_list(
     pool: poem::web::Data<&DbPool>,
     _: crate::auth::middleware::JwtAuth,
-    Path((ext_database_id, entity_name)): Path<(i16, String)>,
+    Path((ext_database_id, entity_name)): Path<(i64, String)>,
     Query(pagination): Query<Pagination>,
 ) -> poem::Result<impl IntoResponse> {
     let (start, length) = parse_pagination(&pagination);
@@ -795,7 +795,7 @@ pub async fn query_exact_whitelist_run(
         )
     })?;
 
-    let (ext_database_id, query_string): (i16, String) = tbl_ext_database_query::table
+    let (ext_database_id, query_string): (i64, String) = tbl_ext_database_query::table
         .filter(tbl_ext_database_query::id.eq(ext_database_query_id))
         .filter(tbl_ext_database_query::is_del.eq(0))
         .select((
@@ -838,7 +838,7 @@ pub async fn query_exact_whitelist_list(
         )
     })?;
 
-    let (ext_database_id, query_string): (i16, String) = tbl_ext_database_query::table
+    let (ext_database_id, query_string): (i64, String) = tbl_ext_database_query::table
         .filter(tbl_ext_database_query::id.eq(ext_database_query_id))
         .filter(tbl_ext_database_query::is_del.eq(0))
         .select((

@@ -1,5 +1,5 @@
 CREATE TABLE tbl_ext_server(
-	id SMALLINT PRIMARY KEY
+	id BIGINT PRIMARY KEY
 	, cd VARCHAR (20) NOT NULL
 	, dscp VARCHAR (500)
 	, mt_server_type_id SMALLINT NOT NULL

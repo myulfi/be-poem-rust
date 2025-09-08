@@ -30,7 +30,7 @@ use crate::{
 };
 use serde_json::{Value, json};
 
-fn get_manual_query(conn: &mut PgConnection, query_manual_id: i64) -> poem::Result<(i16, String)> {
+fn get_manual_query(conn: &mut PgConnection, query_manual_id: i64) -> poem::Result<(i64, String)> {
     tbl_query_manual::table
         .filter(tbl_query_manual::id.eq(query_manual_id))
         .select((tbl_query_manual::ext_database_id, tbl_query_manual::query))
@@ -113,10 +113,10 @@ async fn get_query_manual_row(
 
 async fn get_external_pool(
     conn: &mut PgConnection,
-    ext_database_id: i16,
+    ext_database_id: i64,
 ) -> poem::Result<(DatabasePool, Option<Child>, i16, String)> {
     let (ext_server_id, ip, port, username, password, db_name, mt_database_type_id, is_use_page): (
-        i16,
+        Option<i64>,
         String,
         i16,
         String,
@@ -137,7 +137,7 @@ async fn get_external_pool(
             tbl_ext_database::mt_database_type_id,
             tbl_ext_database::is_use_page,
         ))
-        .first::<(i16, String, i16, String, String, String, i16, i16)>(conn)
+        .first::<(Option<i64>, String, i16, String, String, String, i16, i16)>(conn)
         .map_err(|_| common::error_message(StatusCode::NOT_FOUND, "information.notFound"))?;
 
     let (url, pagination): (String, String) = tbl_mt_database_type::table
@@ -146,12 +146,13 @@ async fn get_external_pool(
         .first::<(String, String)>(conn)
         .map_err(|_| common::error_message(StatusCode::NOT_FOUND, "information.notFound"))?;
 
-    let (tunnel, target_ip, target_port): (Option<Child>, String, u16) = if ext_server_id > 0 {
-        let (tunnel_process, local_port) = start_ssh_tunnel(conn, ext_server_id, &ip, port)?;
-        (Some(tunnel_process), "localhost".into(), local_port)
-    } else {
-        (None, ip.clone(), port as u16)
-    };
+    let (tunnel, target_ip, target_port): (Option<Child>, String, u16) =
+        if let Some(id) = ext_server_id {
+            let (tunnel_process, local_port) = start_ssh_tunnel(conn, id, &ip, port)?;
+            (Some(tunnel_process), "localhost".into(), local_port)
+        } else {
+            (None, ip.clone(), port as u16)
+        };
 
     let url = url
         .replace("{0}", &username)
@@ -196,7 +197,7 @@ async fn get_external_pool(
 
 pub async fn query_with_pagination(
     conn: &mut PgConnection,
-    ext_database_id: i16,
+    ext_database_id: i64,
     query: &str,
     start: i64,
     length: i64,
@@ -339,7 +340,7 @@ async fn query_with_pagination_mysql(
 
 async fn run_and_extract_columns(
     conn: &mut PgConnection,
-    ext_database_id: i16,
+    ext_database_id: i64,
     raw_query: &str,
 ) -> poem::Result<Vec<serde_json::Value>> {
     let (ext_pool, tunnel, _, pagination) = get_external_pool(conn, ext_database_id).await?;
@@ -373,7 +374,7 @@ async fn run_and_extract_columns(
     Ok(columns_info)
 }
 
-fn get_whitelist_query(conn: &mut PgConnection, query_id: i64) -> poem::Result<(i16, String)> {
+fn get_whitelist_query(conn: &mut PgConnection, query_id: i64) -> poem::Result<(i64, String)> {
     tbl_ext_database_query::table
         .filter(tbl_ext_database_query::id.eq(query_id))
         .filter(tbl_ext_database_query::is_del.eq(0))
@@ -389,8 +390,10 @@ fn get_whitelist_query(conn: &mut PgConnection, query_id: i64) -> poem::Result<(
 pub async fn connect(
     pool: poem::web::Data<&DbPool>,
     _: crate::auth::middleware::JwtAuth,
-    Path(ext_database_id): Path<i16>,
+    Path(ext_database_id): Path<i64>,
 ) -> poem::Result<impl IntoResponse> {
+    validate_id(ext_database_id)?;
+
     let conn = &mut pool.get().map_err(|_| {
         common::error_message(
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -413,9 +416,11 @@ pub async fn connect(
 pub async fn query_object_list(
     pool: poem::web::Data<&DbPool>,
     _: crate::auth::middleware::JwtAuth,
-    Path(ext_database_id): Path<i16>,
+    Path(ext_database_id): Path<i64>,
     Query(pagination): Query<Pagination>,
 ) -> poem::Result<impl IntoResponse> {
+    validate_id(ext_database_id)?;
+
     let (start, length) = parse_pagination(&pagination);
 
     let conn = &mut pool.get().map_err(|_| {
@@ -511,9 +516,11 @@ pub async fn query_object_list(
 pub fn query_whitelist_list(
     pool: poem::web::Data<&DbPool>,
     _: crate::auth::middleware::JwtAuth,
-    Path(ext_database_id): Path<i16>,
+    Path(ext_database_id): Path<i64>,
     Query(pagination): Query<Pagination>,
 ) -> poem::Result<impl IntoResponse> {
+    validate_id(ext_database_id)?;
+
     let (start, length) = parse_pagination(&pagination);
 
     let mut query = tbl_ext_database_query::table.into_boxed();
@@ -583,9 +590,11 @@ pub fn query_whitelist_list(
 pub async fn query_manual_run(
     pool: poem::web::Data<&DbPool>,
     jwt_auth: crate::auth::middleware::JwtAuth,
-    Path(ext_database_id): Path<i16>,
+    Path(ext_database_id): Path<i64>,
     Json(entry_manual_ext_database): Json<EntryQueryManual>,
 ) -> poem::Result<impl IntoResponse> {
+    validate_id(ext_database_id)?;
+
     let conn = &mut pool.get().map_err(|_| {
         common::error_message(
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -763,6 +772,7 @@ pub async fn query_manual_list(
     Query(pagination): Query<Pagination>,
 ) -> poem::Result<impl IntoResponse> {
     validate_id(query_manual_id)?;
+
     let (start, length) = parse_pagination(&pagination);
 
     let conn = &mut pool.get().map_err(|_| {
@@ -972,8 +982,10 @@ pub async fn query_manual_xml(
 pub async fn query_exact_object_run(
     pool: poem::web::Data<&DbPool>,
     _: crate::auth::middleware::JwtAuth,
-    Path((ext_database_id, entity_name)): Path<(i16, String)>,
+    Path((ext_database_id, entity_name)): Path<(i64, String)>,
 ) -> poem::Result<impl IntoResponse> {
+    validate_id(ext_database_id)?;
+
     let conn = &mut pool.get().map_err(|_| {
         common::error_message(
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -993,9 +1005,11 @@ pub async fn query_exact_object_run(
 pub async fn query_exact_object_list(
     pool: poem::web::Data<&DbPool>,
     _: crate::auth::middleware::JwtAuth,
-    Path((ext_database_id, entity_name)): Path<(i16, String)>,
+    Path((ext_database_id, entity_name)): Path<(i64, String)>,
     Query(pagination): Query<Pagination>,
 ) -> poem::Result<impl IntoResponse> {
+    validate_id(ext_database_id)?;
+
     let (start, length) = parse_pagination(&pagination);
 
     let conn = &mut pool.get().map_err(|_| {
@@ -1016,6 +1030,8 @@ pub async fn query_exact_whitelist_run(
     _: crate::auth::middleware::JwtAuth,
     Path(ext_database_query_id): Path<i64>,
 ) -> poem::Result<impl IntoResponse> {
+    validate_id(ext_database_query_id)?;
+
     let conn = &mut pool.get().map_err(|_| {
         common::error_message(
             StatusCode::INTERNAL_SERVER_ERROR,

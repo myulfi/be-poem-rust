@@ -161,6 +161,52 @@ pub fn add(
         })?;
 
     Ok((StatusCode::CREATED, Json(DataResponse { data: inserted })))
+
+    // let max_id: Option<i16> = tbl_ext_api::table
+    //     .select(diesel::dsl::max(tbl_ext_api::id))
+    //     .first(conn)
+    //     .map_err(|e| {
+    //         eprintln!("Loading error: {}", e);
+    //         common::error_message(
+    //             poem::http::StatusCode::INTERNAL_SERVER_ERROR,
+    //             "information.internalServerError",
+    //         )
+    //     })?;
+
+    // let next_id = max_id.unwrap_or(0).saturating_add(1);
+
+    // if next_id < i16::MAX {
+    //     let ext_api = ExternalApi {
+    //         id: next_id,
+    //         nm: entry_ext_api.nm,
+    //         dscp: entry_ext_api.dscp,
+    //         is_del: 0,
+    //         created_by: jwt_auth.claims.username,
+    //         dt_created: Utc::now().naive_utc(),
+    //         updated_by: None,
+    //         dt_updated: None,
+    //         version: 0,
+    //     };
+
+    //     let inserted = diesel::insert_into(tbl_ext_api::table)
+    //         .values(&ext_api)
+    //         .get_result::<ExternalApi>(conn)
+    //         .map_err(|e| {
+    //             eprintln!("Inserting error: {}", e);
+    //             common::error_message(
+    //                 StatusCode::INTERNAL_SERVER_ERROR,
+    //                 "information.internalServerError",
+    //             )
+    //         })?;
+
+    //     Ok((StatusCode::CREATED, Json(DataResponse { data: inserted })))
+    // } else {
+    //     eprintln!("ID limit reached");
+    //     Err(common::error_message(
+    //         StatusCode::INTERNAL_SERVER_ERROR,
+    //         "information.internalServerError",
+    //     ))
+    // }
 }
 
 #[handler]

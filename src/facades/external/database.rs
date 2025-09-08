@@ -1,7 +1,7 @@
 use crate::models::common::{DataResponse, PaginatedResponse};
 use crate::models::external::database::{EntryExternalDatabase, ExternalDatabase};
 use crate::schema::tbl_ext_database;
-use crate::utils::common::{self, parse_pagination, validation_error_response};
+use crate::utils::common::{self, parse_pagination, validate_id, validation_error_response};
 use crate::{db::DbPool, models::common::Pagination};
 use chrono::Utc;
 use diesel::prelude::*;
@@ -85,8 +85,10 @@ pub fn list(
 pub fn get(
     pool: poem::web::Data<&DbPool>,
     _: crate::auth::middleware::JwtAuth,
-    Path(ext_database_id): Path<i16>,
+    Path(ext_database_id): Path<i64>,
 ) -> poem::Result<impl IntoResponse> {
+    validate_id(ext_database_id)?;
+
     let conn = &mut pool.get().map_err(|_| {
         common::error_message(
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -112,6 +114,28 @@ pub fn add(
         return Err(validation_error_response(e));
     }
 
+    let ext_database = ExternalDatabase {
+        id: common::generate_id(),
+        cd: entry_ext_database.cd,
+        dscp: entry_ext_database.dscp,
+        ext_server_id: entry_ext_database.ext_server_id,
+        mt_database_type_id: entry_ext_database.mt_database_type_id,
+        ip: entry_ext_database.ip,
+        port: entry_ext_database.port,
+        username: entry_ext_database.username,
+        password: entry_ext_database.password,
+        db_name: entry_ext_database.db_name,
+        // db_connection: entry_ext_database.db_connection,
+        is_use_page: entry_ext_database.is_use_page,
+        is_lock: entry_ext_database.is_lock,
+        is_del: 0,
+        created_by: jwt_auth.claims.username,
+        dt_created: Utc::now().naive_utc(),
+        updated_by: None,
+        dt_updated: None,
+        version: 0,
+    };
+
     let conn = &mut pool.get().map_err(|_| {
         common::error_message(
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -119,70 +143,29 @@ pub fn add(
         )
     })?;
 
-    let max_id: Option<i16> = tbl_ext_database::table
-        .select(diesel::dsl::max(tbl_ext_database::id))
-        .first(conn)
+    let inserted = diesel::insert_into(tbl_ext_database::table)
+        .values(&ext_database)
+        .get_result::<ExternalDatabase>(conn)
         .map_err(|e| {
-            eprintln!("Loading error: {}", e);
+            eprintln!("Inserting error: {}", e);
             common::error_message(
-                poem::http::StatusCode::INTERNAL_SERVER_ERROR,
+                StatusCode::INTERNAL_SERVER_ERROR,
                 "information.internalServerError",
             )
         })?;
 
-    let next_id = max_id.unwrap_or(0).saturating_add(1);
-
-    if next_id < i16::MAX {
-        let ext_database = ExternalDatabase {
-            id: next_id,
-            cd: entry_ext_database.cd,
-            dscp: entry_ext_database.dscp,
-            ext_server_id: entry_ext_database.ext_server_id,
-            mt_database_type_id: entry_ext_database.mt_database_type_id,
-            ip: entry_ext_database.ip,
-            port: entry_ext_database.port,
-            username: entry_ext_database.username,
-            password: entry_ext_database.password,
-            db_name: entry_ext_database.db_name,
-            // db_connection: entry_ext_database.db_connection,
-            is_use_page: entry_ext_database.is_use_page,
-            is_lock: entry_ext_database.is_lock,
-            is_del: 0,
-            created_by: jwt_auth.claims.username,
-            dt_created: Utc::now().naive_utc(),
-            updated_by: None,
-            dt_updated: None,
-            version: 0,
-        };
-
-        let inserted = diesel::insert_into(tbl_ext_database::table)
-            .values(&ext_database)
-            .get_result::<ExternalDatabase>(conn)
-            .map_err(|e| {
-                eprintln!("Inserting error: {}", e);
-                common::error_message(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "information.internalServerError",
-                )
-            })?;
-
-        Ok((StatusCode::CREATED, Json(DataResponse { data: inserted })))
-    } else {
-        eprintln!("ID limit reached");
-        Err(common::error_message(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "information.internalServerError",
-        ))
-    }
+    Ok((StatusCode::CREATED, Json(DataResponse { data: inserted })))
 }
 
 #[handler]
 pub fn update(
     pool: poem::web::Data<&DbPool>,
     jwt_auth: crate::auth::middleware::JwtAuth,
-    Path(ext_database_id): Path<i16>,
+    Path(ext_database_id): Path<i64>,
     Json(mut entry_ext_database): Json<EntryExternalDatabase>,
 ) -> poem::Result<impl IntoResponse> {
+    validate_id(ext_database_id)?;
+
     if let Err(e) = entry_ext_database.validate() {
         return Err(validation_error_response(e));
     }
@@ -222,8 +205,10 @@ pub fn update(
 pub fn delete(
     pool: poem::web::Data<&DbPool>,
     jwt_auth: crate::auth::middleware::JwtAuth,
-    Path(ext_database_id): Path<i16>,
+    Path(ext_database_id): Path<i64>,
 ) -> poem::Result<impl IntoResponse> {
+    validate_id(ext_database_id)?;
+
     let conn = &mut pool.get().map_err(|_| {
         common::error_message(
             StatusCode::INTERNAL_SERVER_ERROR,

@@ -7,7 +7,7 @@ use validator_derive::Validate;
 #[serde(rename_all = "camelCase")]
 #[diesel(table_name = crate::schema::tbl_ext_server)]
 pub struct ExternalServer {
-    pub id: i16,
+    pub id: i64,
     #[serde(rename = "code")]
     pub cd: String,
     #[serde(rename = "description")]

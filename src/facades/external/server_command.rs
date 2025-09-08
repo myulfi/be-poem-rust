@@ -11,7 +11,9 @@ use crate::models::external::server::{
     MultipleExternalServerFile,
 };
 use crate::schema::tbl_ext_server;
-use crate::utils::common::{self, generate_copy_name, is_valid_directory_path, is_valid_filename};
+use crate::utils::common::{
+    self, generate_copy_name, is_valid_directory_path, is_valid_filename, validate_id,
+};
 use base64::{Engine, engine::general_purpose};
 use chrono::Utc;
 use diesel::prelude::*;
@@ -54,7 +56,7 @@ struct FileData {
 
 fn create_ssh_session(
     conn: &mut PgConnection,
-    ext_server_id: i16,
+    ext_server_id: i64,
 ) -> Result<(Session, i16), poem::Error> {
     let (mt_server_type_id, ip, port, username, password, private_key): (
         i16,
@@ -128,7 +130,7 @@ fn create_ssh_session(
 
 pub fn start_ssh_tunnel(
     conn: &mut PgConnection,
-    ext_server_id: i16,
+    ext_server_id: i64,
     remote_host: &str,
     remote_port: i16,
 ) -> Result<(Child, u16), poem::Error> {
@@ -311,8 +313,10 @@ pub struct PaginatedDirectoryResponse<T> {
 pub async fn connect(
     pool: Data<&DbPool>,
     _: crate::auth::middleware::JwtAuth,
-    Path(ext_server_id): Path<i16>,
+    Path(ext_server_id): Path<i64>,
 ) -> Result<impl IntoResponse> {
+    validate_id(ext_server_id)?;
+
     let conn = &mut pool.get().map_err(|_| {
         common::error_message(
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -356,9 +360,10 @@ pub async fn connect(
 pub async fn directory_list(
     pool: Data<&DbPool>,
     _: crate::auth::middleware::JwtAuth,
-    Path(ext_server_id): Path<i16>,
+    Path(ext_server_id): Path<i64>,
     Query(pagination): Query<DirectoryPagination>,
 ) -> Result<impl IntoResponse> {
+    validate_id(ext_server_id)?;
     let start = pagination.start.unwrap_or(0);
     let length = pagination.length.unwrap_or(10).min(100);
 
@@ -650,9 +655,11 @@ fn check_is_directory(
 pub async fn add_folder(
     pool: Data<&DbPool>,
     _: crate::auth::middleware::JwtAuth,
-    Path(ext_server_id): Path<i16>,
+    Path(ext_server_id): Path<i64>,
     Json(entry_ext_server_directory): Json<EntryExternalServerDirectory>,
 ) -> Result<impl IntoResponse> {
+    validate_id(ext_server_id)?;
+
     let mut dir_path = entry_ext_server_directory.dir.join("/");
     if !is_valid_directory_path(&dir_path) {
         return Err(common::error_message(
@@ -696,9 +703,11 @@ pub async fn add_folder(
 pub async fn rename_entity(
     pool: Data<&DbPool>,
     _: crate::auth::middleware::JwtAuth,
-    Path(ext_server_id): Path<i16>,
+    Path(ext_server_id): Path<i64>,
     Json(entry_ext_server_directory): Json<EntryExternalServerDirectory>,
 ) -> Result<impl IntoResponse> {
+    validate_id(ext_server_id)?;
+
     let mut dir_path = entry_ext_server_directory.dir.join("/");
     if !is_valid_directory_path(&dir_path) {
         return Err(common::error_message(
@@ -770,9 +779,11 @@ pub async fn rename_entity(
 pub async fn get_file(
     pool: Data<&DbPool>,
     _: crate::auth::middleware::JwtAuth,
-    Path(ext_server_id): Path<i16>,
+    Path(ext_server_id): Path<i64>,
     Query(file_data): Query<FileData>,
 ) -> Result<impl IntoResponse> {
+    validate_id(ext_server_id)?;
+
     if !is_valid_filename(&file_data.name) {
         return Err(common::error_message(
             StatusCode::BAD_REQUEST,
@@ -835,9 +846,11 @@ pub async fn get_file(
 pub async fn download_entity(
     pool: Data<&DbPool>,
     _: crate::auth::middleware::JwtAuth,
-    Path(ext_server_id): Path<i16>,
+    Path(ext_server_id): Path<i64>,
     Query(file_data): Query<FileData>,
 ) -> Result<impl IntoResponse> {
+    validate_id(ext_server_id)?;
+
     use poem::{Body, Response};
     use tokio_util::io::ReaderStream;
 
@@ -1003,9 +1016,11 @@ pub async fn download_entity(
 pub async fn add_file(
     pool: Data<&DbPool>,
     _: crate::auth::middleware::JwtAuth,
-    Path(ext_server_id): Path<i16>,
+    Path(ext_server_id): Path<i64>,
     Json(entry_ext_server_file): Json<EntryExternalServerFile>,
 ) -> Result<impl IntoResponse> {
+    validate_id(ext_server_id)?;
+
     if !is_valid_filename(&entry_ext_server_file.nm) {
         return Err(common::error_message(
             StatusCode::BAD_REQUEST,
@@ -1080,9 +1095,11 @@ pub async fn add_file(
 pub async fn update_file(
     pool: Data<&DbPool>,
     _: crate::auth::middleware::JwtAuth,
-    Path(ext_server_id): Path<i16>,
+    Path(ext_server_id): Path<i64>,
     Json(entry_ext_server_file): Json<EntryExternalServerFile>,
 ) -> Result<impl IntoResponse> {
+    validate_id(ext_server_id)?;
+
     if !is_valid_filename(&entry_ext_server_file.nm) {
         return Err(common::error_message(
             StatusCode::BAD_REQUEST,
@@ -1154,9 +1171,11 @@ pub async fn update_file(
 pub async fn upload_files(
     pool: Data<&DbPool>,
     _: crate::auth::middleware::JwtAuth,
-    Path(ext_server_id): Path<i16>,
+    Path(ext_server_id): Path<i64>,
     mut multipart: Multipart,
 ) -> Result<impl IntoResponse> {
+    validate_id(ext_server_id)?;
+
     let mut dir_array: Vec<String> = Vec::new();
     let mut file_array: Vec<(String, Vec<u8>)> = Vec::new();
 
@@ -1259,9 +1278,11 @@ pub async fn upload_files(
 pub async fn clone_entity(
     pool: Data<&DbPool>,
     _: crate::auth::middleware::JwtAuth,
-    Path(ext_server_id): Path<i16>,
+    Path(ext_server_id): Path<i64>,
     Json(multiple_ext_server_file): Json<MultipleExternalServerFile>,
 ) -> Result<impl IntoResponse> {
+    validate_id(ext_server_id)?;
+
     let mut dir_path = multiple_ext_server_file.dir.join("/");
     if !is_valid_directory_path(&dir_path) {
         return Err(common::error_message(
@@ -1326,9 +1347,11 @@ pub async fn clone_entity(
 pub async fn copy_entity(
     pool: Data<&DbPool>,
     _: crate::auth::middleware::JwtAuth,
-    Path(ext_server_id): Path<i16>,
+    Path(ext_server_id): Path<i64>,
     Json(multiple_ext_server_file): Json<MultipleExternalServerEntity>,
 ) -> Result<impl IntoResponse> {
+    validate_id(ext_server_id)?;
+
     let mut source_dir_path = multiple_ext_server_file.source_dir.join("/");
     if !is_valid_directory_path(&source_dir_path) {
         return Err(common::error_message(
@@ -1407,9 +1430,11 @@ pub async fn copy_entity(
 pub async fn remove_entity(
     pool: Data<&DbPool>,
     _: crate::auth::middleware::JwtAuth,
-    Path(ext_server_id): Path<i16>,
+    Path(ext_server_id): Path<i64>,
     Json(multiple_ext_server_file): Json<MultipleExternalServerFile>,
 ) -> Result<impl IntoResponse> {
+    validate_id(ext_server_id)?;
+
     let mut dir_path = multiple_ext_server_file.dir.join("/");
     if !is_valid_directory_path(&dir_path) {
         return Err(common::error_message(

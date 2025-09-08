@@ -77,7 +77,7 @@ pub fn external_server(
     let ext_server = tbl_ext_server::table
         .filter(tbl_ext_server::is_del.eq(0))
         .select((tbl_ext_server::id, tbl_ext_server::cd))
-        .load::<(i16, String)>(conn)
+        .load::<(i64, String)>(conn)
         .map_err(|_| common::error_message(StatusCode::NOT_FOUND, "information.notFound"))?;
 
     Ok(Json(DataResponse {

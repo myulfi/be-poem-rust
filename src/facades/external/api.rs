@@ -1,7 +1,7 @@
 use crate::models::common::{DataResponse, PaginatedResponse};
 use crate::models::external::api::{EntryExternalApi, ExternalApi};
 use crate::schema::tbl_ext_api;
-use crate::utils::common::{self, validation_error_response};
+use crate::utils::common::{self, validate_id, validation_error_response};
 use crate::{db::DbPool, models::common::Pagination};
 use chrono::Utc;
 use diesel::prelude::*;
@@ -86,8 +86,10 @@ pub fn list(
 pub fn get(
     pool: poem::web::Data<&DbPool>,
     _: crate::auth::middleware::JwtAuth,
-    Path(ext_api_id): Path<i16>,
+    Path(ext_api_id): Path<i64>,
 ) -> poem::Result<impl IntoResponse> {
+    validate_id(ext_api_id)?;
+
     let conn = &mut pool.get().map_err(|_| {
         common::error_message(
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -113,6 +115,19 @@ pub fn add(
         return Err(validation_error_response(e));
     }
 
+    let ext_api = ExternalApi {
+        id: common::generate_id(),
+        nm: entry_ext_api.nm,
+        dscp: entry_ext_api.dscp,
+        authz: None,
+        is_del: 0,
+        created_by: jwt_auth.claims.username,
+        dt_created: Utc::now().naive_utc(),
+        updated_by: None,
+        dt_updated: None,
+        version: 0,
+    };
+
     let conn = &mut pool.get().map_err(|_| {
         common::error_message(
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -120,60 +135,29 @@ pub fn add(
         )
     })?;
 
-    let max_id: Option<i16> = tbl_ext_api::table
-        .select(diesel::dsl::max(tbl_ext_api::id))
-        .first(conn)
+    let inserted = diesel::insert_into(tbl_ext_api::table)
+        .values(&ext_api)
+        .get_result::<ExternalApi>(conn)
         .map_err(|e| {
-            eprintln!("Loading error: {}", e);
+            eprintln!("Inserting error: {}", e);
             common::error_message(
-                poem::http::StatusCode::INTERNAL_SERVER_ERROR,
+                StatusCode::INTERNAL_SERVER_ERROR,
                 "information.internalServerError",
             )
         })?;
 
-    let next_id = max_id.unwrap_or(0).saturating_add(1);
-
-    if next_id < i16::MAX {
-        let ext_api = ExternalApi {
-            id: next_id,
-            nm: entry_ext_api.nm,
-            dscp: entry_ext_api.dscp,
-            is_del: 0,
-            created_by: jwt_auth.claims.username,
-            dt_created: Utc::now().naive_utc(),
-            updated_by: None,
-            dt_updated: None,
-            version: 0,
-        };
-
-        let inserted = diesel::insert_into(tbl_ext_api::table)
-            .values(&ext_api)
-            .get_result::<ExternalApi>(conn)
-            .map_err(|e| {
-                eprintln!("Inserting error: {}", e);
-                common::error_message(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "information.internalServerError",
-                )
-            })?;
-
-        Ok((StatusCode::CREATED, Json(DataResponse { data: inserted })))
-    } else {
-        eprintln!("ID limit reached");
-        Err(common::error_message(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "information.internalServerError",
-        ))
-    }
+    Ok((StatusCode::CREATED, Json(DataResponse { data: inserted })))
 }
 
 #[handler]
 pub fn update(
     pool: poem::web::Data<&DbPool>,
     jwt_auth: crate::auth::middleware::JwtAuth,
-    Path(ext_api_id): Path<i16>,
+    Path(ext_api_id): Path<i64>,
     Json(mut entry_ext_api): Json<EntryExternalApi>,
 ) -> poem::Result<impl IntoResponse> {
+    validate_id(ext_api_id)?;
+
     if let Err(e) = entry_ext_api.validate() {
         return Err(validation_error_response(e));
     }
@@ -213,8 +197,10 @@ pub fn update(
 pub fn delete(
     pool: poem::web::Data<&DbPool>,
     jwt_auth: crate::auth::middleware::JwtAuth,
-    Path(ext_api_id): Path<i16>,
+    Path(ext_api_id): Path<i64>,
 ) -> poem::Result<impl IntoResponse> {
+    validate_id(ext_api_id)?;
+
     let conn = &mut pool.get().map_err(|_| {
         common::error_message(
             StatusCode::INTERNAL_SERVER_ERROR,
