@@ -35,19 +35,27 @@ pub struct MasterMenu {
 #[serde(rename_all = "camelCase")]
 pub struct MenuNode {
     pub id: i16,
-    pub name: String,
+    #[serde(rename = "name")]
+    pub nm: String,
     pub icon: Option<String>,
-    pub sequence: i16,
+    #[serde(rename = "sequence")]
+    pub seq: i16,
     pub path: Option<String>,
-    pub menu_parent_id: i16,
+    #[serde(rename = "menuParentId")]
+    pub mt_menu_parent_id: i16,
     pub color: Option<String>,
-    pub new_flag: i16,
-    pub blank_target_flag: i16,
-    pub deleted_flag: i16,
+    #[serde(rename = "newFlag")]
+    pub is_new: i16,
+    #[serde(rename = "blankTargetFlag")]
+    pub is_blank_target: i16,
+    #[serde(rename = "deletedFlag")]
+    pub is_del: i16,
     pub created_by: String,
-    pub created_date: NaiveDateTime,
+    #[serde(rename = "createdDate")]
+    pub dt_created: NaiveDateTime,
     pub updated_by: Option<String>,
-    pub updated_date: Option<NaiveDateTime>,
+    #[serde(rename = "updatedDate")]
+    pub dt_updated: Option<NaiveDateTime>,
     pub version: i16,
-    pub children: Vec<MenuNode>, // 👈 tambahan children
+    pub children: Vec<MenuNode>,
 }

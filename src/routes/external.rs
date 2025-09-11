@@ -1,4 +1,5 @@
 use crate::facades::external::api;
+use crate::facades::external::api_req;
 use crate::facades::external::database;
 use crate::facades::external::database_query;
 use crate::facades::external::server;
@@ -116,5 +117,9 @@ pub fn routes() -> Route {
         .at(
             "/:id/api.json",
             get(api::get).patch(api::update).delete(api::delete),
+        )
+        .at(
+            "/:id/api-request.json",
+            get(api_req::get),
         )
 }

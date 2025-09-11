@@ -94,8 +94,8 @@ pub struct ExternalApiRequest {
     pub mt_http_method_id: i16,
     pub path: Option<String>,
     #[serde(rename = "haveAuthorizationFlag")]
-    is_have_authz: i16,
-    body: String,
+    pub is_have_authz: i16,
+    pub body: Option<String>,
     pub is_del: i16,
     pub created_by: String,
     #[serde(rename = "createdDate")]
@@ -104,6 +104,35 @@ pub struct ExternalApiRequest {
     #[serde(rename = "updatedDate")]
     pub dt_updated: Option<NaiveDateTime>,
     pub version: i16,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExternalApiRequestNode {
+    pub id: i64,
+    #[serde(rename = "sequence")]
+    pub seq: i16,
+    #[serde(rename = "name")]
+    pub nm: String,
+    #[serde(rename = "externalApiId")]
+    pub ext_api_id: i64,
+    pub parent_id: i64,
+    #[serde(rename = "httpMethodId")]
+    pub mt_http_method_id: i16,
+    pub path: Option<String>,
+    #[serde(rename = "haveAuthorizationFlag")]
+    pub is_have_authz: i16,
+    pub body: Option<String>,
+    #[serde(rename = "deletedFlag")]
+    pub is_del: i16,
+    pub created_by: String,
+    #[serde(rename = "dateCreated")]
+    pub dt_created: NaiveDateTime,
+    pub updated_by: Option<String>,
+    #[serde(rename = "dateUpdated")]
+    pub dt_updated: Option<NaiveDateTime>,
+    pub version: i16,
+    pub children: Vec<ExternalApiRequestNode>,
 }
 
 #[derive(Queryable, Serialize, Insertable, Deserialize, Validate, AsChangeset)]

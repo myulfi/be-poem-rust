@@ -8,7 +8,6 @@ mod schema;
 mod utils;
 
 use anyhow::Result;
-use dotenvy::dotenv;
 use poem::http::StatusCode;
 use poem::middleware::Cors;
 use poem::web::{Json, Path};
@@ -19,7 +18,7 @@ use std::env;
 use std::net::SocketAddr;
 use tokio::{fs, signal};
 
-use crate::auth::jwt::{generate_token, refresh_token};
+use crate::auth::jwt;
 
 // use std::io::{self, Write};
 // io::stdout().flush().unwrap();
@@ -35,7 +34,7 @@ fn hello() -> poem::Response {
 
 #[handler]
 async fn get_language(Path(lng): Path<String>) -> Response {
-    let path = format!("src/language/{}.json", lng);
+    let path = format!("../config/language/{}.json", lng);
 
     match fs::read_to_string(&path).await {
         Ok(data) => match serde_json::from_str::<Value>(&data) {
@@ -48,7 +47,8 @@ async fn get_language(Path(lng): Path<String>) -> Response {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    dotenv().ok();
+    // dotenv().ok();
+    dotenvy::from_path("../config/.env").expect("Gagal memuat file .env");
 
     let database_url = env::var("DATABASE_URL")
         .map_err(|_| anyhow::anyhow!("DATABASE_URL is not set in environment"))?;
@@ -70,8 +70,8 @@ async fn main() -> Result<()> {
     let app = Route::new()
         .at("", get(hello))
         .at("/:lng/language.json", get(get_language))
-        .nest("/generate-token.json", post(generate_token))
-        .nest("/refresh-token.json", post(refresh_token))
+        .nest("/generate-token.json", post(jwt::generate_token))
+        .nest("/refresh-token.json", post(jwt::refresh_token))
         .nest("/main", routes::main::routes())
         .nest("/master", routes::master::routes())
         .nest("/external", routes::external::routes())
