@@ -1,3 +1,4 @@
+pub mod command;
 pub mod common;
 pub mod example_template;
 pub mod external;

@@ -1,3 +1,4 @@
+pub mod command;
 pub mod external;
 pub mod main;
 pub mod master;

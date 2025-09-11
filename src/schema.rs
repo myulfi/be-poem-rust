@@ -230,3 +230,46 @@ table! {
         version -> SmallInt,
     }
 }
+
+table! {
+    tbl_mt_lang (id) {
+        id -> SmallInt,
+        cd -> Varchar,
+        nm -> Varchar,
+        is_del -> SmallInt,
+        created_by -> Varchar,
+        dt_created -> Timestamp,
+        updated_by -> Nullable<Varchar>,
+        dt_updated -> Nullable<Timestamp>,
+        version -> SmallInt,
+    }
+}
+
+table! {
+    tbl_mt_lang_key (id) {
+        id -> BigInt,
+        label_typ -> Varchar,
+        key_cd -> Varchar,
+        is_del -> SmallInt,
+        created_by -> Varchar,
+        dt_created -> Timestamp,
+        updated_by -> Nullable<Varchar>,
+        dt_updated -> Nullable<Timestamp>,
+        version -> SmallInt,
+    }
+}
+
+table! {
+    tbl_mt_lang_value (id) {
+        id -> BigInt,
+        mt_lang_id-> SmallInt,
+        mt_lang_key_id -> BigInt,
+        value -> Varchar,
+        is_del -> SmallInt,
+        created_by -> Varchar,
+        dt_created -> Timestamp,
+        updated_by -> Nullable<Varchar>,
+        dt_updated -> Nullable<Timestamp>,
+        version -> SmallInt,
+    }
+}

@@ -6,4 +6,5 @@ pub fn routes() -> Route {
         .at("/database-type.json", get(master::database_type))
         .at("/server-type.json", get(master::server_type))
         .at("/external-server.json", get(master::external_server))
+        .at("/language.json", get(master::language))
 }

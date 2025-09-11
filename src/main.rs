@@ -75,6 +75,7 @@ async fn main() -> Result<()> {
         .nest("/main", routes::main::routes())
         .nest("/master", routes::master::routes())
         .nest("/external", routes::external::routes())
+        .nest("/command", routes::command::routes())
         .nest("/test", routes::test::routes())
         .data(pool)
         .with(cors);
