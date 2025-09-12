@@ -1,11 +1,25 @@
-Create project              | cargo new be-rust-poem
-
 Set toolchain to nightly	| rustup override set nightly
 Install postgres        	| cargo install diesel_cli --no-default-features --features postgres
+Install build x-platform    | cargo install cross
 Build (Changing Cargo.toml) | cargo build
 Build w/o produce binary    | cargo check
 Update version depedency    | cargo update
 Build and Run				| cargo run
 Build and Run w/ arg		| cargo run -- arg1 arg2
 Build Distriution File		| cargo build --release
+Build Ubuntu File		    | cross build --release --target x86_64-unknown-linux-gnu
 Build HTML for doc  		| cargo doc --open
+------------------------------------------------------------
+
+Create project                  | D:\myulfi\development> cargo new be-rust-poem
+di WSL
+Install rust    | curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+Checking        | source $HOME/.cargo/env
+Checking        | rustc --version
+Checking        | cargo --version
+Install B-E     | sudo apt install build-essential -y
+Install PKG     | sudo apt install pkg-config libssl-dev -y
+Install libpq   | sudo apt install libpq-dev
+Copy project    | rsync -av --progress --exclude='.git' --exclude='target' /mnt/d/myulfi/development/be-poem-rust/ /home/myulfi/development/be-poem-rust/
+Open project    | cd /home/myulfi/development/be-poem-rust
+Build project   | cargo build --release
