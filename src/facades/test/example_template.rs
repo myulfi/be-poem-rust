@@ -274,13 +274,13 @@ pub fn delete(
         .execute(conn)
     {
         Ok(affected_rows) => {
-            if affected_rows == 0 {
+            if affected_rows > 0 {
+                Ok(StatusCode::NO_CONTENT)
+            } else {
                 Err(common::error_message(
                     StatusCode::NOT_FOUND,
                     "information.notFound",
                 ))
-            } else {
-                Ok(StatusCode::NO_CONTENT)
             }
         }
         Err(e) => {

@@ -1,5 +1,4 @@
-use bigdecimal::BigDecimal;
-use chrono::{NaiveDate, NaiveDateTime};
+use chrono::NaiveDateTime;
 use diesel::prelude::{AsChangeset, Insertable, Queryable};
 use serde::{Deserialize, Serialize};
 use validator_derive::Validate;
@@ -45,16 +44,42 @@ pub struct MasterLanguageValue {
     pub version: i16,
 }
 
-#[derive(Serialize)]
+#[derive(Deserialize, Validate)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct EntryMasterLanguageKey {
+    #[serde(rename = "labelType")]
+    pub label_typ: String,
+    #[serde(rename = "keyCode")]
+    #[validate(length(min = 1, message = "Key Code must be filled"))]
+    pub key_cd: String,
+    pub value: Vec<MasterLanguageValueResponse>,
+    #[serde(default)]
+    pub version: i16,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct MasterLanguageValueResponse {
+    #[serde(rename = "languageId")]
     pub mt_lang_id: i16,
     pub value: String,
 }
 
 #[derive(Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct MasterLanguageKeyResponse {
+    pub id: i64,
+    #[serde(rename = "labelType")]
+    pub label_typ: String,
+    #[serde(rename = "keyCode")]
+    pub key_cd: String,
+    pub value: Vec<MasterLanguageValueResponse>,
+}
+
+#[derive(Serialize, Queryable)]
+pub struct MasterLanguageKeySummary {
     pub id: i64,
     pub label_typ: String,
     pub key_cd: String,
-    pub value: Vec<MasterLanguageValueResponse>,
+    pub version: i16,
 }

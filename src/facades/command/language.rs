@@ -1,17 +1,18 @@
 use std::collections::HashMap;
 
-use crate::models::common::{DataResponse, PaginatedResponse};
-use crate::models::configuration::language::{
-    MasterLanguageKeyResponse, MasterLanguageValueResponse,
+use crate::models::command::language::{
+    EntryMasterLanguageKey, MasterLanguageKeyResponse, MasterLanguageKeySummary,
+    MasterLanguageValueResponse,
 };
+use crate::models::common::{DataResponse, PaginatedResponse};
 use crate::schema::{tbl_mt_lang_key, tbl_mt_lang_value};
 use crate::utils::common::{
     self, parse_ids_from_string, validate_id, validate_ids, validation_error_response,
 };
 use crate::{
     db::DbPool,
+    models::command::language::{MasterLanguageKey, MasterLanguageValue},
     models::common::Pagination,
-    models::configuration::language::{MasterLanguageKey, MasterLanguageValue},
 };
 // use bigdecimal::BigDecimal;
 // use bigdecimal::num_bigint::BigInt;
@@ -24,6 +25,7 @@ use poem::{
     http::StatusCode,
     web::{Json, Path},
 };
+use serde_json::json;
 use validator::Validate;
 
 #[handler]
@@ -130,205 +132,263 @@ pub fn list(
     }
 }
 
-// #[handler]
-// pub fn get(
-//     pool: poem::web::Data<&DbPool>,
-//     _: crate::auth::middleware::JwtAuth,
-//     Path(example_template_id): Path<i64>,
-// ) -> poem::Result<impl IntoResponse> {
-//     validate_id(example_template_id)?;
+#[handler]
+pub fn get(
+    pool: poem::web::Data<&DbPool>,
+    _: crate::auth::middleware::JwtAuth,
+    Path(mt_lang_key_id): Path<i64>,
+) -> poem::Result<impl IntoResponse> {
+    validate_id(mt_lang_key_id)?;
 
-//     let conn = &mut pool.get().map_err(|_| {
-//         common::error_message(
-//             StatusCode::INTERNAL_SERVER_ERROR,
-//             "information.connectionFailed",
-//         )
-//     })?;
+    let conn = &mut pool.get().map_err(|_| {
+        common::error_message(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "information.connectionFailed",
+        )
+    })?;
 
-//     let example_template = tbl_example_template::table
-//         .filter(tbl_example_template::id.eq(example_template_id))
-//         .first::<ExampleTemplate>(conn)
-//         .map_err(|_| common::error_message(StatusCode::NOT_FOUND, "information.notFound"))?;
+    let mt_lang_key = tbl_mt_lang_key::table
+        .select((
+            tbl_mt_lang_key::id,
+            tbl_mt_lang_key::label_typ,
+            tbl_mt_lang_key::key_cd,
+            tbl_mt_lang_key::version,
+        ))
+        .filter(tbl_mt_lang_key::id.eq(mt_lang_key_id))
+        .first::<MasterLanguageKeySummary>(conn)
+        .map_err(|_| common::error_message(StatusCode::NOT_FOUND, "information.notFound"))?;
 
-//     Ok(Json(DataResponse {
-//         data: example_template,
-//     }))
-// }
+    let mt_lang_value_vec = tbl_mt_lang_value::table
+        .select((tbl_mt_lang_value::mt_lang_id, tbl_mt_lang_value::value))
+        .filter(tbl_mt_lang_value::mt_lang_key_id.eq(mt_lang_key_id))
+        .load::<(i16, String)>(conn)
+        .map_err(|_| common::error_message(StatusCode::NOT_FOUND, "information.notFound"))?;
 
-// #[handler]
-// pub fn add(
-//     pool: poem::web::Data<&DbPool>,
-//     jwt_auth: crate::auth::middleware::JwtAuth,
-//     Json(entry_example_template): Json<EntryExampleTemplate>,
-// ) -> poem::Result<impl IntoResponse> {
-//     if let Err(e) = entry_example_template.validate() {
-//         return Err(validation_error_response(e));
-//     }
+    Ok(Json(DataResponse {
+        data: json!({
+            "id": mt_lang_key.id,
+            "labelType": mt_lang_key.label_typ,
+            "keyCode": mt_lang_key.key_cd,
+            "value": mt_lang_value_vec
+                .into_iter()
+                .map(|val| MasterLanguageValueResponse {
+                    mt_lang_id: val.0,
+                    value: val.1,
+                })
+                .collect::<Vec<_>>(),
+            "version": mt_lang_key.version,
+        }),
+    }))
+}
 
-//     let example_template = ExampleTemplate {
-//         id: common::generate_id(),
-//         nm: entry_example_template.nm,
-//         dscp: entry_example_template.dscp,
-//         val: entry_example_template.val,
-//         amt: entry_example_template.amt,
-//         dt: entry_example_template.dt,
-//         foreign_id: entry_example_template.foreign_id,
-//         is_active: 1,
-//         is_del: 0,
-//         created_by: jwt_auth.claims.username,
-//         dt_created: Utc::now().naive_utc(),
-//         updated_by: None,
-//         dt_updated: None,
-//         version: 0,
-//     };
+#[handler]
+pub fn add(
+    pool: poem::web::Data<&DbPool>,
+    jwt_auth: crate::auth::middleware::JwtAuth,
+    Json(entry_mt_lang_key): Json<EntryMasterLanguageKey>,
+) -> poem::Result<impl IntoResponse> {
+    if let Err(e) = entry_mt_lang_key.validate() {
+        return Err(validation_error_response(e));
+    }
 
-//     let conn = &mut pool.get().map_err(|_| {
-//         common::error_message(
-//             StatusCode::INTERNAL_SERVER_ERROR,
-//             "information.connectionFailed",
-//         )
-//     })?;
+    let username = jwt_auth.claims.username.clone();
+    let mt_lang_key = MasterLanguageKey {
+        id: common::generate_id(),
+        label_typ: entry_mt_lang_key.label_typ,
+        key_cd: entry_mt_lang_key.key_cd,
+        is_del: 0,
+        created_by: username.clone(),
+        dt_created: Utc::now().naive_utc(),
+        updated_by: None,
+        dt_updated: None,
+        version: 0,
+    };
 
-//     let inserted = diesel::insert_into(tbl_example_template::table)
-//         .values(&example_template)
-//         .get_result::<ExampleTemplate>(conn)
-//         .map_err(|e| {
-//             eprintln!("Inserting error: {}", e);
-//             common::error_message(
-//                 StatusCode::INTERNAL_SERVER_ERROR,
-//                 "information.internalServerError",
-//             )
-//         })?;
+    let conn = &mut pool.get().map_err(|_| {
+        common::error_message(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "information.connectionFailed",
+        )
+    })?;
 
-//     Ok((StatusCode::CREATED, Json(DataResponse { data: inserted })))
+    let inserted = diesel::insert_into(tbl_mt_lang_key::table)
+        .values(&mt_lang_key)
+        .get_result::<MasterLanguageKey>(conn)
+        .map_err(|e| {
+            eprintln!("Inserting error: {}", e);
+            common::error_message(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "information.internalServerError",
+            )
+        })?;
 
-//     // let max_id: Option<i16> = tbl_ext_api::table
-//     //     .select(diesel::dsl::max(tbl_ext_api::id))
-//     //     .first(conn)
-//     //     .map_err(|e| {
-//     //         eprintln!("Loading error: {}", e);
-//     //         common::error_message(
-//     //             poem::http::StatusCode::INTERNAL_SERVER_ERROR,
-//     //             "information.internalServerError",
-//     //         )
-//     //     })?;
+    diesel::insert_into(tbl_mt_lang_value::table)
+        .values(
+            entry_mt_lang_key
+                .value
+                .into_iter()
+                .map(|val| MasterLanguageValue {
+                    id: common::generate_id(),
+                    mt_lang_id: val.mt_lang_id,
+                    mt_lang_key_id: inserted.id,
+                    value: val.value,
+                    is_del: 0,
+                    created_by: username.clone(),
+                    dt_created: Utc::now().naive_utc(),
+                    updated_by: None,
+                    dt_updated: None,
+                    version: 0,
+                })
+                .collect::<Vec<_>>(),
+        )
+        .execute(conn)
+        .map_err(|e| {
+            eprintln!("Inserting error: {}", e);
+            common::error_message(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "information.internalServerError",
+            )
+        })?;
 
-//     // let next_id = max_id.unwrap_or(0).saturating_add(1);
+    Ok((StatusCode::CREATED, Json(DataResponse { data: inserted })))
+}
 
-//     // if next_id < i16::MAX {
-//     //     let ext_api = ExternalApi {
-//     //         id: next_id,
-//     //         nm: entry_ext_api.nm,
-//     //         dscp: entry_ext_api.dscp,
-//     //         is_del: 0,
-//     //         created_by: jwt_auth.claims.username,
-//     //         dt_created: Utc::now().naive_utc(),
-//     //         updated_by: None,
-//     //         dt_updated: None,
-//     //         version: 0,
-//     //     };
+#[handler]
+pub fn update(
+    pool: poem::web::Data<&DbPool>,
+    jwt_auth: crate::auth::middleware::JwtAuth,
+    Path(mt_lang_key_id): Path<i64>,
+    Json(mut entry_mt_lang_key): Json<EntryMasterLanguageKey>,
+) -> poem::Result<impl IntoResponse> {
+    validate_id(mt_lang_key_id)?;
 
-//     //     let inserted = diesel::insert_into(tbl_ext_api::table)
-//     //         .values(&ext_api)
-//     //         .get_result::<ExternalApi>(conn)
-//     //         .map_err(|e| {
-//     //             eprintln!("Inserting error: {}", e);
-//     //             common::error_message(
-//     //                 StatusCode::INTERNAL_SERVER_ERROR,
-//     //                 "information.internalServerError",
-//     //             )
-//     //         })?;
+    if let Err(e) = entry_mt_lang_key.validate() {
+        return Err(validation_error_response(e));
+    }
 
-//     //     Ok((StatusCode::CREATED, Json(DataResponse { data: inserted })))
-//     // } else {
-//     //     eprintln!("ID limit reached");
-//     //     Err(common::error_message(
-//     //         StatusCode::INTERNAL_SERVER_ERROR,
-//     //         "information.internalServerError",
-//     //     ))
-//     // }
-// }
+    let conn = &mut pool.get().map_err(|_| {
+        common::error_message(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "information.connectionFailed",
+        )
+    })?;
 
-// #[handler]
-// pub fn update(
-//     pool: poem::web::Data<&DbPool>,
-//     jwt_auth: crate::auth::middleware::JwtAuth,
-//     Path(example_template_id): Path<i64>,
-//     Json(mut entry_example_template): Json<EntryExampleTemplate>,
-// ) -> poem::Result<impl IntoResponse> {
-//     validate_id(example_template_id)?;
+    let username = jwt_auth.claims.username.clone();
+    let updated = diesel::update(
+        tbl_mt_lang_key::table
+            .filter(tbl_mt_lang_key::id.eq(mt_lang_key_id))
+            .filter(tbl_mt_lang_key::version.eq(entry_mt_lang_key.version)),
+    )
+    .set((
+        tbl_mt_lang_key::label_typ.eq(entry_mt_lang_key.label_typ),
+        tbl_mt_lang_key::key_cd.eq(entry_mt_lang_key.key_cd),
+        tbl_mt_lang_key::version.eq(entry_mt_lang_key.version + 1),
+        tbl_mt_lang_key::updated_by.eq(username.clone()),
+        tbl_mt_lang_key::dt_updated.eq(Some(Utc::now().naive_utc())),
+    ))
+    .get_result::<MasterLanguageKey>(conn)
+    .map_err(|e| {
+        eprintln!("Updating error: {}", e);
+        common::error_message(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "information.internalServerError",
+        )
+    })?;
 
-//     if let Err(e) = entry_example_template.validate() {
-//         return Err(validation_error_response(e));
-//     }
+    let backup_mt_lang_key_size = diesel::update(
+        tbl_mt_lang_key::table
+            .filter(tbl_mt_lang_key::id.eq(mt_lang_key_id))
+            .filter(tbl_mt_lang_key::version.eq(&entry_mt_lang_key.version - 1)),
+    )
+    .set(tbl_mt_lang_key::is_del.eq(1))
+    .execute(conn)
+    .map_err(|e| {
+        eprintln!("Backupking error: {}", e);
+        common::error_message(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "information.internalServerError",
+        )
+    })?;
 
-//     let conn = &mut pool.get().map_err(|_| {
-//         common::error_message(
-//             StatusCode::INTERNAL_SERVER_ERROR,
-//             "information.connectionFailed",
-//         )
-//     })?;
+    diesel::insert_into(tbl_mt_lang_value::table)
+        .values(
+            entry_mt_lang_key
+                .value
+                .into_iter()
+                .map(|val| MasterLanguageValue {
+                    id: common::generate_id(),
+                    mt_lang_id: val.mt_lang_id,
+                    mt_lang_key_id: updated.id,
+                    value: val.value,
+                    is_del: 0,
+                    created_by: username.clone(),
+                    dt_created: Utc::now().naive_utc(),
+                    updated_by: None,
+                    dt_updated: None,
+                    version: 0,
+                })
+                .collect::<Vec<MasterLanguageValue>>(),
+        )
+        .execute(conn)
+        .map_err(|e| {
+            eprintln!("Inserting error: {}", e);
+            common::error_message(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "information.internalServerError",
+            )
+        })?;
 
-//     entry_example_template.version = entry_example_template.version + 1;
+    if backup_mt_lang_key_size > 0 {
+        diesel::delete(
+            tbl_mt_lang_value::table
+                .filter(tbl_mt_lang_value::mt_lang_key_id.eq(mt_lang_key_id))
+                .filter(tbl_mt_lang_value::is_del.eq(1)),
+        )
+        .execute(conn);
+    }
 
-//     let updated = diesel::update(
-//         tbl_example_template::table
-//             .filter(tbl_example_template::id.eq(example_template_id))
-//             .filter(tbl_example_template::version.eq(&entry_example_template.version - 1)),
-//     )
-//     // .set(&update)
-//     .set((
-//         &entry_example_template,
-//         tbl_example_template::updated_by.eq(Some(jwt_auth.claims.username.clone())),
-//         tbl_example_template::dt_updated.eq(Some(Utc::now().naive_utc())),
-//     ))
-//     .get_result::<ExampleTemplate>(conn)
-//     .map_err(|e| {
-//         eprintln!("Updating error: {}", e);
-//         common::error_message(
-//             StatusCode::INTERNAL_SERVER_ERROR,
-//             "information.internalServerError",
-//         )
-//     })?;
+    Ok(Json(DataResponse { data: updated }))
+}
 
-//     Ok(Json(DataResponse { data: updated }))
-// }
+#[handler]
+pub fn delete(
+    pool: poem::web::Data<&DbPool>,
+    _: crate::auth::middleware::JwtAuth,
+    Path(example_template_ids): Path<String>,
+) -> poem::Result<impl IntoResponse> {
+    validate_ids(&example_template_ids)?;
+    let ids = parse_ids_from_string(&example_template_ids)?;
 
-// #[handler]
-// pub fn delete(
-//     pool: poem::web::Data<&DbPool>,
-//     _: crate::auth::middleware::JwtAuth,
-//     Path(example_template_ids): Path<String>,
-// ) -> poem::Result<impl IntoResponse> {
-//     validate_ids(&example_template_ids)?;
-//     let ids = parse_ids_from_string(&example_template_ids)?;
+    let conn = &mut pool.get().map_err(|_| {
+        common::error_message(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "information.connectionFailed",
+        )
+    })?;
 
-//     let conn = &mut pool.get().map_err(|_| {
-//         common::error_message(
-//             StatusCode::INTERNAL_SERVER_ERROR,
-//             "information.connectionFailed",
-//         )
-//     })?;
-
-//     match diesel::delete(tbl_example_template::table.filter(tbl_example_template::id.eq_any(ids)))
-//         .execute(conn)
-//     {
-//         Ok(affected_rows) => {
-//             if affected_rows == 0 {
-//                 Err(common::error_message(
-//                     StatusCode::NOT_FOUND,
-//                     "information.notFound",
-//                 ))
-//             } else {
-//                 Ok(StatusCode::NO_CONTENT)
-//             }
-//         }
-//         Err(e) => {
-//             eprintln!("Deleting error: {}", e);
-//             return Err(common::error_message(
-//                 StatusCode::INTERNAL_SERVER_ERROR,
-//                 "information.internalServerError",
-//             ));
-//         }
-//     }
-// }
+    match diesel::delete(tbl_mt_lang_key::table.filter(tbl_mt_lang_key::id.eq_any(&ids)))
+        .execute(conn)
+    {
+        Ok(affected_rows) => {
+            if affected_rows > 0 {
+                diesel::delete(
+                    tbl_mt_lang_value::table.filter(tbl_mt_lang_value::mt_lang_key_id.eq_any(&ids)),
+                )
+                .execute(conn);
+                Ok(StatusCode::NO_CONTENT)
+            } else {
+                Err(common::error_message(
+                    StatusCode::NOT_FOUND,
+                    "information.notFound",
+                ))
+            }
+        }
+        Err(e) => {
+            eprintln!("Deleting error: {}", e);
+            return Err(common::error_message(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "information.internalServerError",
+            ));
+        }
+    }
+}
