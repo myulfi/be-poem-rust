@@ -1,5 +1,5 @@
 use crate::facades::command::language;
-use poem::{Route, get};
+use poem::{Route, get, post};
 
 pub fn routes() -> Route {
     Route::new()
@@ -10,4 +10,5 @@ pub fn routes() -> Route {
                 .patch(language::update)
                 .delete(language::delete),
         )
+        .at("/language-implement.json", post(language::implement))
 }

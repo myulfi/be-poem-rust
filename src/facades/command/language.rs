@@ -1,11 +1,12 @@
 use std::collections::HashMap;
+use std::fs;
 
 use crate::models::command::language::{
     EntryMasterLanguageKey, MasterLanguageKeyResponse, MasterLanguageKeySummary,
     MasterLanguageValueResponse,
 };
 use crate::models::common::{DataResponse, PaginatedResponse};
-use crate::schema::{tbl_mt_lang_key, tbl_mt_lang_value};
+use crate::schema::{tbl_mt_lang, tbl_mt_lang_key, tbl_mt_lang_value};
 use crate::utils::common::{
     self, parse_ids_from_string, validate_id, validate_ids, validation_error_response,
 };
@@ -295,12 +296,10 @@ pub fn update(
         )
     })?;
 
-    let backup_mt_lang_key_size = diesel::update(
-        tbl_mt_lang_key::table
-            .filter(tbl_mt_lang_key::id.eq(mt_lang_key_id))
-            .filter(tbl_mt_lang_key::version.eq(&entry_mt_lang_key.version - 1)),
+    diesel::update(
+        tbl_mt_lang_value::table.filter(tbl_mt_lang_value::mt_lang_key_id.eq(mt_lang_key_id)),
     )
-    .set(tbl_mt_lang_key::is_del.eq(1))
+    .set(tbl_mt_lang_value::is_del.eq(1))
     .execute(conn)
     .map_err(|e| {
         eprintln!("Backupking error: {}", e);
@@ -338,14 +337,12 @@ pub fn update(
             )
         })?;
 
-    if backup_mt_lang_key_size > 0 {
-        diesel::delete(
-            tbl_mt_lang_value::table
-                .filter(tbl_mt_lang_value::mt_lang_key_id.eq(mt_lang_key_id))
-                .filter(tbl_mt_lang_value::is_del.eq(1)),
-        )
-        .execute(conn);
-    }
+    let _ = diesel::delete(
+        tbl_mt_lang_value::table
+            .filter(tbl_mt_lang_value::mt_lang_key_id.eq(mt_lang_key_id))
+            .filter(tbl_mt_lang_value::is_del.eq(1)),
+    )
+    .execute(conn);
 
     Ok(Json(DataResponse { data: updated }))
 }
@@ -391,4 +388,62 @@ pub fn delete(
             ));
         }
     }
+}
+
+#[handler]
+pub fn implement(
+    pool: poem::web::Data<&DbPool>,
+    _: crate::auth::middleware::JwtAuth,
+) -> poem::Result<impl IntoResponse> {
+    let conn = &mut pool.get().map_err(|_| {
+        common::error_message(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "information.connectionFailed",
+        )
+    })?;
+
+    let mt_lang_key = tbl_mt_lang::table
+        .select((tbl_mt_lang::id, tbl_mt_lang::cd))
+        .filter(tbl_mt_lang::is_del.eq(0))
+        .load::<(i16, String)>(conn)
+        .map_err(|_| common::error_message(StatusCode::NOT_FOUND, "information.notFound"))?;
+
+    for (mt_lang_id, mt_lang_cd) in mt_lang_key.iter() {
+        let mt_lang_value_vec = tbl_mt_lang_value::table
+            .inner_join(
+                tbl_mt_lang_key::table.on(tbl_mt_lang_key::id
+                    .eq(tbl_mt_lang_value::mt_lang_key_id)
+                    .and(tbl_mt_lang_key::is_del.eq(0))),
+            )
+            .filter(tbl_mt_lang_value::is_del.eq(0))
+            .filter(tbl_mt_lang_value::mt_lang_id.eq(mt_lang_id))
+            .select((
+                tbl_mt_lang_key::label_typ,
+                tbl_mt_lang_key::key_cd,
+                tbl_mt_lang_value::value,
+            ))
+            .load::<(String, String, String)>(conn)
+            .map_err(|_| common::error_message(StatusCode::NOT_FOUND, "information.notFound"))?;
+
+        let mut map = HashMap::new();
+        for (label_typ, key_cd, value) in mt_lang_value_vec {
+            map.insert(format!("{}.{}", label_typ, key_cd), value);
+        }
+
+        let json_str = serde_json::to_string_pretty(&map).map_err(|e| {
+            eprintln!("JSON serialization error: {}", e);
+            common::error_message(StatusCode::INTERNAL_SERVER_ERROR, "json.serializationError")
+        })?;
+
+        let path = format!("../config/language/{}.json", mt_lang_cd);
+
+        fs::write(&path, json_str).map_err(|e| {
+            eprintln!("Failed to write file {}: {}", path, e);
+            common::error_message(StatusCode::INTERNAL_SERVER_ERROR, "file.writeError")
+        })?;
+
+        println!("Wrote language file: {}", path);
+    }
+
+    Ok(StatusCode::NO_CONTENT)
 }

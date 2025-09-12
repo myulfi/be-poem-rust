@@ -273,3 +273,5 @@ table! {
         version -> SmallInt,
     }
 }
+joinable!(tbl_mt_lang_value -> tbl_mt_lang_key (mt_lang_key_id));
+allow_tables_to_appear_in_same_query!(tbl_mt_lang_value, tbl_mt_lang_key);

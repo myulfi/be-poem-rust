@@ -44,7 +44,7 @@ pub struct MasterLanguageValue {
     pub version: i16,
 }
 
-#[derive(Deserialize, Validate)]
+#[derive(Deserialize, Serialize, Validate)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct EntryMasterLanguageKey {
     #[serde(rename = "labelType")]
