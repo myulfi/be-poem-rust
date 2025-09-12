@@ -6,7 +6,7 @@ use crate::models::command::language::{
     MasterLanguageValueResponse,
 };
 use crate::models::common::{DataResponse, PaginatedResponse};
-use crate::schema::{tbl_mt_lang, tbl_mt_lang_key, tbl_mt_lang_value};
+use crate::schema::{tbl_mt_lang, tbl_mt_lang_key, tbl_mt_lang_type, tbl_mt_lang_value};
 use crate::utils::common::{
     self, parse_ids_from_string, validate_id, validate_ids, validation_error_response,
 };
@@ -114,7 +114,7 @@ pub fn list(
             .into_iter()
             .map(|k| MasterLanguageKeyResponse {
                 id: k.id,
-                label_typ: k.label_typ,
+                mt_lang_type_id: k.mt_lang_type_id,
                 key_cd: k.key_cd,
                 value: map.remove(&k.id).unwrap_or_else(Vec::new),
             })
@@ -151,7 +151,7 @@ pub fn get(
     let mt_lang_key = tbl_mt_lang_key::table
         .select((
             tbl_mt_lang_key::id,
-            tbl_mt_lang_key::label_typ,
+            tbl_mt_lang_key::mt_lang_type_id,
             tbl_mt_lang_key::key_cd,
             tbl_mt_lang_key::version,
         ))
@@ -168,7 +168,7 @@ pub fn get(
     Ok(Json(DataResponse {
         data: json!({
             "id": mt_lang_key.id,
-            "labelType": mt_lang_key.label_typ,
+            "languageTypeId": mt_lang_key.mt_lang_type_id,
             "keyCode": mt_lang_key.key_cd,
             "value": mt_lang_value_vec
                 .into_iter()
@@ -195,7 +195,7 @@ pub fn add(
     let username = jwt_auth.claims.username.clone();
     let mt_lang_key = MasterLanguageKey {
         id: common::generate_id(),
-        label_typ: entry_mt_lang_key.label_typ,
+        mt_lang_type_id: entry_mt_lang_key.mt_lang_type_id,
         key_cd: entry_mt_lang_key.key_cd,
         is_del: 0,
         created_by: username.clone(),
@@ -281,7 +281,7 @@ pub fn update(
             .filter(tbl_mt_lang_key::version.eq(entry_mt_lang_key.version)),
     )
     .set((
-        tbl_mt_lang_key::label_typ.eq(entry_mt_lang_key.label_typ),
+        tbl_mt_lang_key::mt_lang_type_id.eq(entry_mt_lang_key.mt_lang_type_id),
         tbl_mt_lang_key::key_cd.eq(entry_mt_lang_key.key_cd),
         tbl_mt_lang_key::version.eq(entry_mt_lang_key.version + 1),
         tbl_mt_lang_key::updated_by.eq(username.clone()),
@@ -415,10 +415,15 @@ pub fn implement(
                     .eq(tbl_mt_lang_value::mt_lang_key_id)
                     .and(tbl_mt_lang_key::is_del.eq(0))),
             )
+            .inner_join(
+                tbl_mt_lang_type::table.on(tbl_mt_lang_type::id
+                    .eq(tbl_mt_lang_key::mt_lang_type_id)
+                    .and(tbl_mt_lang_type::is_del.eq(0))),
+            )
             .filter(tbl_mt_lang_value::is_del.eq(0))
             .filter(tbl_mt_lang_value::mt_lang_id.eq(mt_lang_id))
             .select((
-                tbl_mt_lang_key::label_typ,
+                tbl_mt_lang_type::cd,
                 tbl_mt_lang_key::key_cd,
                 tbl_mt_lang_value::value,
             ))
@@ -426,8 +431,8 @@ pub fn implement(
             .map_err(|_| common::error_message(StatusCode::NOT_FOUND, "information.notFound"))?;
 
         let mut map = HashMap::new();
-        for (label_typ, key_cd, value) in mt_lang_value_vec {
-            map.insert(format!("{}.{}", label_typ, key_cd), value);
+        for (mt_lang_type_cd, key_cd, value) in mt_lang_value_vec {
+            map.insert(format!("{}.{}", mt_lang_type_cd, key_cd), value);
         }
 
         let json_str = serde_json::to_string_pretty(&map).map_err(|e| {
@@ -441,8 +446,6 @@ pub fn implement(
             eprintln!("Failed to write file {}: {}", path, e);
             common::error_message(StatusCode::INTERNAL_SERVER_ERROR, "file.writeError")
         })?;
-
-        println!("Wrote language file: {}", path);
     }
 
     Ok(StatusCode::NO_CONTENT)

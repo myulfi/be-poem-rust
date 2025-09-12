@@ -246,9 +246,23 @@ table! {
 }
 
 table! {
+    tbl_mt_lang_type (id) {
+        id -> SmallInt,
+        cd -> Varchar,
+        nm -> Varchar,
+        is_del -> SmallInt,
+        created_by -> Varchar,
+        dt_created -> Timestamp,
+        updated_by -> Nullable<Varchar>,
+        dt_updated -> Nullable<Timestamp>,
+        version -> SmallInt,
+    }
+}
+
+table! {
     tbl_mt_lang_key (id) {
         id -> BigInt,
-        label_typ -> Varchar,
+        mt_lang_type_id -> SmallInt,
         key_cd -> Varchar,
         is_del -> SmallInt,
         created_by -> Varchar,
@@ -258,6 +272,7 @@ table! {
         version -> SmallInt,
     }
 }
+joinable!(tbl_mt_lang_key -> tbl_mt_lang_type (mt_lang_type_id));
 
 table! {
     tbl_mt_lang_value (id) {
@@ -274,4 +289,4 @@ table! {
     }
 }
 joinable!(tbl_mt_lang_value -> tbl_mt_lang_key (mt_lang_key_id));
-allow_tables_to_appear_in_same_query!(tbl_mt_lang_value, tbl_mt_lang_key);
+allow_tables_to_appear_in_same_query!(tbl_mt_lang_value, tbl_mt_lang_key, tbl_mt_lang_type);

@@ -1,5 +1,5 @@
 use chrono::NaiveDateTime;
-use diesel::prelude::{AsChangeset, Insertable, Queryable};
+use diesel::prelude::{Insertable, Queryable};
 use serde::{Deserialize, Serialize};
 use validator_derive::Validate;
 
@@ -8,8 +8,8 @@ use validator_derive::Validate;
 #[diesel(table_name = crate::schema::tbl_mt_lang_key)]
 pub struct MasterLanguageKey {
     pub id: i64,
-    #[serde(rename = "labelType")]
-    pub label_typ: String,
+    #[serde(rename = "languageTypeId")]
+    pub mt_lang_type_id: i16,
     #[serde(rename = "keyCode")]
     pub key_cd: String,
     #[serde(rename = "deletedFlag")]
@@ -47,8 +47,8 @@ pub struct MasterLanguageValue {
 #[derive(Deserialize, Serialize, Validate)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct EntryMasterLanguageKey {
-    #[serde(rename = "labelType")]
-    pub label_typ: String,
+    #[serde(rename = "languageTypeId")]
+    pub mt_lang_type_id: i16,
     #[serde(rename = "keyCode")]
     #[validate(length(min = 1, message = "Key Code must be filled"))]
     pub key_cd: String,
@@ -69,8 +69,8 @@ pub struct MasterLanguageValueResponse {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct MasterLanguageKeyResponse {
     pub id: i64,
-    #[serde(rename = "labelType")]
-    pub label_typ: String,
+    #[serde(rename = "languageTypeId")]
+    pub mt_lang_type_id: i16,
     #[serde(rename = "keyCode")]
     pub key_cd: String,
     pub value: Vec<MasterLanguageValueResponse>,
@@ -79,7 +79,7 @@ pub struct MasterLanguageKeyResponse {
 #[derive(Serialize, Queryable)]
 pub struct MasterLanguageKeySummary {
     pub id: i64,
-    pub label_typ: String,
+    pub mt_lang_type_id: i16,
     pub key_cd: String,
     pub version: i16,
 }

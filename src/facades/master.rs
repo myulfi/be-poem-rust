@@ -1,6 +1,8 @@
 use crate::db::DbPool;
 use crate::models::common::DataResponse;
-use crate::schema::{tbl_ext_server, tbl_mt_database_type, tbl_mt_lang, tbl_mt_server_type};
+use crate::schema::{
+    tbl_ext_server, tbl_mt_database_type, tbl_mt_lang, tbl_mt_lang_type, tbl_mt_server_type,
+};
 use crate::utils::common;
 use diesel::prelude::*;
 use poem::IntoResponse;
@@ -108,6 +110,32 @@ pub fn language(
 
     Ok(Json(DataResponse {
         data: mt_lang
+            .into_iter()
+            .map(|(key, value)| serde_json::json!({ "key": key, "value": value }))
+            .collect::<Vec<serde_json::Value>>(),
+    }))
+}
+
+#[handler]
+pub fn language_type(
+    pool: poem::web::Data<&DbPool>,
+    _: crate::auth::middleware::JwtAuth,
+) -> poem::Result<impl IntoResponse> {
+    let conn = &mut pool.get().map_err(|_| {
+        common::error_message(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "information.connectionFailed",
+        )
+    })?;
+
+    let mt_lang_type = tbl_mt_lang_type::table
+        .filter(tbl_mt_lang_type::is_del.eq(0))
+        .select((tbl_mt_lang_type::id, tbl_mt_lang_type::cd))
+        .load::<(i16, String)>(conn)
+        .map_err(|_| common::error_message(StatusCode::NOT_FOUND, "information.notFound"))?;
+
+    Ok(Json(DataResponse {
+        data: mt_lang_type
             .into_iter()
             .map(|(key, value)| serde_json::json!({ "key": key, "value": value }))
             .collect::<Vec<serde_json::Value>>(),
