@@ -23,45 +23,24 @@ ECHO ==========================================
 ECHO.
 ECHO Please Select :
 ECHO.
-ECHO  - [1] Copy Code
+ECHO  - [1] Build Binary
 ECHO.
-ECHO  - [2] Build Binary
+ECHO  - [2] Start Binary
 ECHO.
-ECHO  - [3] Copy Binary
+ECHO  - [3] Restart Binary
 ECHO.
-ECHO  - [4] Start Binary
-ECHO.
-ECHO  - [5] Stop Binary
+ECHO  - [4] Stop Binary
 ECHO. ------------------------------------------
 ECHO  - [x] Exit
 ECHO.
 SET /p MENU=Please enter menu : 
 
-IF "%MENU%" == "1" (goto CopyCode)
-IF "%MENU%" == "2" (goto BuildBinary)
-IF "%MENU%" == "3" (goto CopyBinary)
-IF "%MENU%" == "4" (goto StartBinary)
-IF "%MENU%" == "5" (goto StopBinary)
+IF "%MENU%" == "1" (goto BuildBinary)
+IF "%MENU%" == "2" (goto StartBinary)
+IF "%MENU%" == "3" (goto RestartBinary)
+IF "%MENU%" == "4" (goto StopBinary)
 IF "%MENU%" == "x" (goto Exit)
 
-GOTO Menu
-
-@rem ------------------------------------------------------------------------------
-:CopyCode
-
-ECHO.
-ECHO ------------------------------
-ECHO Copy Code
-ECHO ------------------------------
-ECHO.
-
-@rem scp -i "%PROD_PRIVATE_KEY%" -r src "%PROD_USER%@%PROD_HOST%:%DEVLOPMENT_DIR%/src"
-@rem scp -i "%PROD_PRIVATE_KEY%" Cargo.toml "%PROD_USER%@%PROD_HOST%:%DEVLOPMENT_DIR%/Cargo.toml"
-wsl cp -r src %DEVLOPMENT_DIR%/src
-wsl cp Cargo.toml %DEVLOPMENT_DIR%/Cargo.toml
-
-ECHO.
-PAUSE
 GOTO Menu
 
 @rem ------------------------------------------------------------------------------
@@ -73,24 +52,12 @@ ECHO Build Binary
 ECHO ------------------------------
 ECHO.
 
+@rem scp -i "%PROD_PRIVATE_KEY%" -r src "%PROD_USER%@%PROD_HOST%:%DEVLOPMENT_DIR%/src"
+@rem scp -i "%PROD_PRIVATE_KEY%" Cargo.toml "%PROD_USER%@%PROD_HOST%:%DEVLOPMENT_DIR%/Cargo.toml"
 @rem ssh -i "%PROD_PRIVATE_KEY%" %PROD_USER%@%PROD_HOST% "cd %DEVLOPMENT_DIR% && $HOME/.cargo/bin/cargo build --release"
+wsl cp -r src %DEVLOPMENT_DIR%/src
+wsl cp Cargo.toml %DEVLOPMENT_DIR%/Cargo.toml
 wsl bash -c "cd %DEVLOPMENT_DIR% && $HOME/.cargo/bin/cargo build --release"
-
-ECHO.
-PAUSE
-GOTO Menu
-
-@rem ------------------------------------------------------------------------------
-:CopyBinary
-
-ECHO.
-ECHO ---------------------------
-ECHO Copy Binary
-ECHO ---------------------------
-ECHO.
-
-@rem ssh -i "%PROD_PRIVATE_KEY%" %PROD_USER%@%PROD_HOST% "cp %DEVLOPMENT_DIR%/target/release/%PRODUCTION_BINARY% %PRODUCTION_DIR%"
-wsl cp %DEVLOPMENT_DIR%/target/release/%PRODUCTION_BINARY% "$(pwd)"
 
 ECHO.
 PAUSE
@@ -105,8 +72,13 @@ ECHO Start Binary
 ECHO ---------------------------
 ECHO.
 
+@rem ssh -i "%PROD_PRIVATE_KEY%" %PROD_USER%@%PROD_HOST% "%PRODUCTION_DIR%/stop.sh"
+@rem ssh -i "%PROD_PRIVATE_KEY%" %PROD_USER%@%PROD_HOST% "cp %DEVLOPMENT_DIR%/target/release/%PRODUCTION_BINARY% %PRODUCTION_DIR%"
 @rem ssh -i "%PROD_PRIVATE_KEY%" %PROD_USER%@%PROD_HOST% "%PRODUCTION_DIR%/start.sh"
+wsl cp %DEVLOPMENT_DIR%/target/release/%PRODUCTION_BINARY% "$(pwd)"
+ssh -i "%PROD_PRIVATE_KEY%" %PROD_USER%@%PROD_HOST% "%PRODUCTION_DIR%/stop.sh"
 scp -i "%PROD_PRIVATE_KEY%" %PRODUCTION_BINARY% "%PROD_USER%@%PROD_HOST%:%PRODUCTION_DIR%/%PRODUCTION_BINARY%"
+ssh -i "%PROD_PRIVATE_KEY%" %PROD_USER%@%PROD_HOST% "%PRODUCTION_DIR%/start.sh"
 
 ECHO.
 PAUSE
@@ -121,7 +93,26 @@ ECHO Stop Binary
 ECHO ---------------------------
 ECHO.
 
+@rem ssh -i "%PROD_PRIVATE_KEY%" %PROD_USER%@%PROD_HOST% "%PRODUCTION_DIR%/stop.sh"
 ssh -i "%PROD_PRIVATE_KEY%" %PROD_USER%@%PROD_HOST% "%PRODUCTION_DIR%/stop.sh"
+
+ECHO.
+PAUSE
+GOTO Menu
+
+@rem ------------------------------------------------------------------------------
+:RestartBinary
+
+ECHO.
+ECHO ---------------------------
+ECHO Restart Binary
+ECHO ---------------------------
+ECHO.
+
+@rem ssh -i "%PROD_PRIVATE_KEY%" %PROD_USER%@%PROD_HOST% "%PRODUCTION_DIR%/stop.sh"
+@rem ssh -i "%PROD_PRIVATE_KEY%" %PROD_USER%@%PROD_HOST% "%PRODUCTION_DIR%/start.sh"
+ssh -i "%PROD_PRIVATE_KEY%" %PROD_USER%@%PROD_HOST% "%PRODUCTION_DIR%/stop.sh"
+ssh -i "%PROD_PRIVATE_KEY%" %PROD_USER%@%PROD_HOST% "%PRODUCTION_DIR%/start.sh"
 
 ECHO.
 PAUSE
