@@ -440,7 +440,7 @@ pub fn implement(
             common::error_message(StatusCode::INTERNAL_SERVER_ERROR, "json.serializationError")
         })?;
 
-        let path = format!("../config/language/{}.json", mt_lang_cd);
+        let path = format!("ext/language/{}.json", mt_lang_cd);
 
         fs::write(&path, json_str).map_err(|e| {
             eprintln!("Failed to write file {}: {}", path, e);

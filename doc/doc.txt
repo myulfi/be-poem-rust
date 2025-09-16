@@ -14,7 +14,7 @@ Build HTML for doc  		| cargo doc --open
 Create project                  | D:\myulfi\development> cargo new be-rust-poem
 di WSL
 Install rust    | curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-Checking        | source $HOME/.cargo/env
+Configure Shell | source $HOME/.cargo/env
 Checking        | rustc --version
 Checking        | cargo --version
 Install B-E     | sudo apt install build-essential -y
@@ -23,3 +23,4 @@ Install libpq   | sudo apt install libpq-dev
 Copy project    | rsync -av --progress --exclude='.git' --exclude='target' /mnt/d/myulfi/development/be-poem-rust/ /home/myulfi/development/be-poem-rust/
 Open project    | cd /home/myulfi/development/be-poem-rust
 Build project   | cargo build --release
+

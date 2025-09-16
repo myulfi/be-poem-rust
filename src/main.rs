@@ -34,7 +34,7 @@ fn hello() -> poem::Response {
 
 #[handler]
 async fn get_language(Path(lng): Path<String>) -> Response {
-    let path = format!("../config/language/{}.json", lng);
+    let path = format!("ext/language/{}.json", lng);
 
     match fs::read_to_string(&path).await {
         Ok(data) => match serde_json::from_str::<Value>(&data) {
@@ -48,7 +48,7 @@ async fn get_language(Path(lng): Path<String>) -> Response {
 #[tokio::main]
 async fn main() -> Result<()> {
     // dotenv().ok();
-    dotenvy::from_path("../config/.env").expect("Gagal memuat file .env");
+    dotenvy::from_path("ext/.env").expect("Gagal memuat file .env");
 
     let database_url = env::var("DATABASE_URL")
         .map_err(|_| anyhow::anyhow!("DATABASE_URL is not set in environment"))?;
