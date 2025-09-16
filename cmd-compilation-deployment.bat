@@ -5,9 +5,10 @@ SETLOCAL
 
 SET PROD_HOST=127.0.0.1
 SET PROD_USER=ubuntu
-SET PROD_PRIVATE_KEY=C:\Users\ssh\rust.pem
-SET DEVLOPMENT_DIR=/home/ubuntu/dev
-SET PRODUCTION_DIR=/home/ubuntu/prod
+SET PROD_PRIVATE_KEY=C:\Users\.ssh\rust.pem
+SET DEVLOPMENT_DIR=/home/ubuntu/development
+SET PRODUCTION_DIR=/home/ubuntu/production
+SET PRODUCTION_BINARY=be-poem-rust
 
 :Menu
 
@@ -54,8 +55,10 @@ ECHO Copy Code
 ECHO ------------------------------
 ECHO.
 
-scp -i "%PROD_PRIVATE_KEY%" -r src "%PROD_USER%@%PROD_HOST%:%DEVLOPMENT_DIR%/src"
-scp -i "%PROD_PRIVATE_KEY%" Cargo.toml "%PROD_USER%@%PROD_HOST%:%DEVLOPMENT_DIR%/Cargo.toml"
+@rem scp -i "%PROD_PRIVATE_KEY%" -r src "%PROD_USER%@%PROD_HOST%:%DEVLOPMENT_DIR%/src"
+@rem scp -i "%PROD_PRIVATE_KEY%" Cargo.toml "%PROD_USER%@%PROD_HOST%:%DEVLOPMENT_DIR%/Cargo.toml"
+wsl cp -r src %DEVLOPMENT_DIR%/src
+wsl cp Cargo.toml %DEVLOPMENT_DIR%/Cargo.toml
 
 ECHO.
 PAUSE
@@ -70,7 +73,8 @@ ECHO Build Binary
 ECHO ------------------------------
 ECHO.
 
-ssh -i "%PROD_PRIVATE_KEY%" %PROD_USER%@%PROD_HOST% "cd %DEVLOPMENT_DIR% && $HOME/.cargo/bin/cargo build --release"
+@rem ssh -i "%PROD_PRIVATE_KEY%" %PROD_USER%@%PROD_HOST% "cd %DEVLOPMENT_DIR% && $HOME/.cargo/bin/cargo build --release"
+wsl bash -c "cd %DEVLOPMENT_DIR% && $HOME/.cargo/bin/cargo build --release"
 
 ECHO.
 PAUSE
@@ -85,7 +89,8 @@ ECHO Copy Binary
 ECHO ---------------------------
 ECHO.
 
-ssh -i "%PROD_PRIVATE_KEY%" %PROD_USER%@%PROD_HOST% "cp %DEVLOPMENT_DIR%/target/release/be-poem-rust %PRODUCTION_DIR%"
+@rem ssh -i "%PROD_PRIVATE_KEY%" %PROD_USER%@%PROD_HOST% "cp %DEVLOPMENT_DIR%/target/release/%PRODUCTION_BINARY% %PRODUCTION_DIR%"
+wsl cp %DEVLOPMENT_DIR%/target/release/%PRODUCTION_BINARY% "$(pwd)"
 
 ECHO.
 PAUSE
@@ -100,14 +105,15 @@ ECHO Start Binary
 ECHO ---------------------------
 ECHO.
 
-ssh -i "%PROD_PRIVATE_KEY%" %PROD_USER%@%PROD_HOST% "%PRODUCTION_DIR%/start.sh"
+@rem ssh -i "%PROD_PRIVATE_KEY%" %PROD_USER%@%PROD_HOST% "%PRODUCTION_DIR%/start.sh"
+scp -i "%PROD_PRIVATE_KEY%" %PRODUCTION_BINARY% "%PROD_USER%@%PROD_HOST%:%PRODUCTION_DIR%/%PRODUCTION_BINARY%"
 
 ECHO.
 PAUSE
 GOTO Menu
 
 @rem ------------------------------------------------------------------------------
-:StartBinary
+:StopBinary
 
 ECHO.
 ECHO ---------------------------
