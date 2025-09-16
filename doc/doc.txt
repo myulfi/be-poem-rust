@@ -1,26 +1,81 @@
-Set toolchain to nightly	| rustup override set nightly
-Install postgres        	| cargo install diesel_cli --no-default-features --features postgres
-Install build x-platform    | cargo install cross
-Build (Changing Cargo.toml) | cargo build
-Build w/o produce binary    | cargo check
-Update version depedency    | cargo update
-Build and Run				| cargo run
-Build and Run w/ arg		| cargo run -- arg1 arg2
-Build Distriution File		| cargo build --release
-Build Ubuntu File		    | cross build --release --target x86_64-unknown-linux-gnu
-Build HTML for doc  		| cargo doc --open
-------------------------------------------------------------
+Installation in Local
+--------------------------------------------------------------------------------------
+| Description			| Command
+--------------------------------------------------------------------------------------
+| Install in Windows
+--------------------------------------------------------------------------------------
+| Create Project		| D:\user\development cargo new be-poem-rust
+| Run					| D:\user\development\be-poem-rust cargo run
+--------------------------------------------------------------------------------------
+| Install in WSL
+--------------------------------------------------------------------------------------
+| List Distro Linux		| D:\user\development wsl --list --online
+| Install Ubuntu		| D:\user\development wsl --install -d Ubuntu-22.04
+| Remove Ubuntu(Opti.)	| D:\user\development wsl --unregister Ubuntu-22.04
+| Create Folder			| /home/ubuntu mkdir be-poem-rust
+| Update Linux			| /home/ubuntu sudo apt update
+| Install rust          | /home/ubuntu curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+| Configure Shell       | /home/ubuntu source $HOME/.cargo/env
+| Checking              | /home/ubuntu rustc --version
+| Checking              | /home/ubuntu cargo --version
+| Install Build Essen.  | /home/ubuntu sudo apt install build-essential -y
+| Install PKG           | /home/ubuntu sudo apt install pkg-config libssl-dev -y
+| Install libpq         | /home/ubuntu sudo apt install libpq-dev
+--------------------------------------------------------------------------------------
 
-Create project                  | D:\myulfi\development> cargo new be-rust-poem
-di WSL
-Install rust    | curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-Configure Shell | source $HOME/.cargo/env
-Checking        | rustc --version
-Checking        | cargo --version
-Install B-E     | sudo apt install build-essential -y
-Install PKG     | sudo apt install pkg-config libssl-dev -y
-Install libpq   | sudo apt install libpq-dev
-Copy project    | rsync -av --progress --exclude='.git' --exclude='target' /mnt/d/myulfi/development/be-poem-rust/ /home/myulfi/development/be-poem-rust/
-Open project    | cd /home/myulfi/development/be-poem-rust
-Build project   | cargo build --release
+Installation in Production
+--------------------------------------------------------------------------------------
+| Description			| Command
+--------------------------------------------------------------------------------------
+| Install Database
+--------------------------------------------------------------------------------------
+| Update Linux			| /home/ubuntu sudo apt update
+| Install Postgresql	| /home/ubuntu sudo apt install postgresql postgresql-contrib
+| Start Postgresql		| /home/ubuntu sudo systemctl start postgresql.service
+| Jump to Lib Postgres	| /home/ubuntu sudo -i -u postgres
+| Active psql		  	| /var/lib/postgresql psql -U postgres
+| Update password		| ALTER USER postgres PASSWORD 'new_password'
+| Create Database		| CREATE DATABASE your_db_name
+| Connect Database     	| \c your_db_name
+--------------------------------------------------------------------------------------
+| Install Rust
+--------------------------------------------------------------------------------------
+| Install Rust          | /home/ubuntu curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+| Configure Shell       | /home/ubuntu source $HOME/.cargo/env
+| Install Build Essen.  | /home/ubuntu sudo apt install build-essential -y
+| Install PKG           | /home/ubuntu sudo apt install pkg-config libssl-dev -y
+| Install libpq         | /home/ubuntu sudo apt install libpq-dev
+| Create Folder     	| /home/ubuntu mkdir be-poem-rust
+| CHMOD	Folder	     	| /home/ubuntu sudo chmod -R 777 /home/ubuntu/be-poem-rust
+--------------------------------------------------------------------------------------
+| Install Nginx
+--------------------------------------------------------------------------------------
+| Install Nginx     	| /home/ubuntu sudo apt install nginx
+| CHMOD	Log	     		| /home/ubuntu sudo chmod -R 777 /var/log/nginx
+| Create config    		| /home/ubuntu sudo vim /etc/nginx/sites-available/main.conf
+--------------------------------------------------------------------------------------
+server {
+	listen 8080;
+	listen [::]:8080;
+	server_name be-poem-rust.com;
 
+	location / {
+		proxy_pass http://localhost:3098;
+		proxy_http_version 1.1;
+		proxy_set_header Upgrade $http_upgrade;
+		proxy_set_header Connection 'upgrade';
+		proxy_set_header Host $host;
+		proxy_cache_bypass $http_upgrade;
+	}
+}
+--------------------------------------------------------------------------------------
+| Setup for access :80	| /home/ubuntu sudo rm /etc/nginx/sites-enabled/default
+| Configuration Changes	| /home/ubuntu sudo rm /etc/nginx/sites-enabled/main.conf
+| Update Configuration	| /home/ubuntu sudo vim /etc/nginx/sites-available/main.conf
+| Symlink				| /home/ubuntu sudo ln -s /etc/nginx/sites-available/main.conf /etc/nginx/sites-enabled/
+| Check Configuration	| /home/ubuntu sudo nginx -t
+| Reload Configuration	| /home/ubuntu sudo systemctl reload nginx
+| Restart Nginx			| /home/ubuntu sudo systemctl restart nginx.service
+| Start Nginx			| /home/ubuntu sudo systemctl start nginx
+| Status Nginx			| /home/ubuntu sudo systemctl status nginx
+--------------------------------------------------------------------------------------
