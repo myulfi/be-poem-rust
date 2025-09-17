@@ -79,3 +79,23 @@ server {
 | Start Nginx			| /home/ubuntu sudo systemctl start nginx
 | Status Nginx			| /home/ubuntu sudo systemctl status nginx
 --------------------------------------------------------------------------------------
+| Install SSL
+--------------------------------------------------------------------------------------
+| Install Snap		    | /home/ubuntu sudo snap install core
+| Refresh Snap		    | /home/ubuntu sudo snap refresh core
+| Rmv Certbot[Optional]	| /home/ubuntu sudo apt remove certbot
+| Install Certbot		| /home/ubuntu sudo snap install --classic certbot
+| Create Shortcut		| /home/ubuntu sudo ln -s /snap/bin/certbot /usr/bin/certbot
+| Allow SSH (Important)	| /home/ubuntu sudo ufw allow 'OpenSSH'
+| See ufw status		| /home/ubuntu sudo ufw status
+| Enable ufw			| /home/ubuntu sudo ufw enable
+| Allow Nginx			| /home/ubuntu sudo ufw allow 'Nginx Full'
+| Delete Nginx HTTP		| /home/ubuntu sudo ufw delete allow 'Nginx HTTP'
+| See ufw status		| /home/ubuntu sudo ufw status
+| Allow Nginx HTTPS		| /home/ubuntu sudo ufw allow 'Nginx HTTPS'
+| See ufw status		| /home/ubuntu sudo ufw status
+| Certbot				| /home/ubuntu sudo certbot --nginx -d domain.com -d api.domain.com
+| Input email			| your_email@gmail.com
+| See Status Snap		| /home/ubuntu sudo systemctl status snap.certbot.renew.service
+| Automate Renew Certbot| /home/ubuntu sudo certbot renew --dry-run
+--------------------------------------------------------------------------------------

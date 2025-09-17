@@ -58,6 +58,7 @@ ECHO.
 wsl cp -r src %DEVLOPMENT_DIR%/src
 wsl cp Cargo.toml %DEVLOPMENT_DIR%/Cargo.toml
 wsl bash -c "cd %DEVLOPMENT_DIR% && $HOME/.cargo/bin/cargo build --release"
+wsl cp %DEVLOPMENT_DIR%/target/release/%PRODUCTION_BINARY% "$(pwd)"
 
 ECHO.
 PAUSE
@@ -75,7 +76,6 @@ ECHO.
 @rem ssh -i "%PROD_PRIVATE_KEY%" %PROD_USER%@%PROD_HOST% "%PRODUCTION_DIR%/stop.sh"
 @rem ssh -i "%PROD_PRIVATE_KEY%" %PROD_USER%@%PROD_HOST% "cp %DEVLOPMENT_DIR%/target/release/%PRODUCTION_BINARY% %PRODUCTION_DIR%"
 @rem ssh -i "%PROD_PRIVATE_KEY%" %PROD_USER%@%PROD_HOST% "%PRODUCTION_DIR%/start.sh"
-wsl cp %DEVLOPMENT_DIR%/target/release/%PRODUCTION_BINARY% "$(pwd)"
 ssh -i "%PROD_PRIVATE_KEY%" %PROD_USER%@%PROD_HOST% "%PRODUCTION_DIR%/stop.sh"
 scp -i "%PROD_PRIVATE_KEY%" %PRODUCTION_BINARY% "%PROD_USER%@%PROD_HOST%:%PRODUCTION_DIR%/%PRODUCTION_BINARY%"
 ssh -i "%PROD_PRIVATE_KEY%" %PROD_USER%@%PROD_HOST% "%PRODUCTION_DIR%/start.sh"
