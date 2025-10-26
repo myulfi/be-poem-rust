@@ -48,7 +48,7 @@ async fn get_language(Path(lng): Path<String>) -> Response {
 #[tokio::main]
 async fn main() -> Result<()> {
     // dotenv().ok();
-    dotenvy::from_path("ext/.env").expect("Gagal memuat file .env");
+    dotenvy::from_path("ext/.env").expect("Failed load .env");
 
     let database_url = env::var("DATABASE_URL")
         .map_err(|_| anyhow::anyhow!("DATABASE_URL is not set in environment"))?;
@@ -59,7 +59,8 @@ async fn main() -> Result<()> {
         .parse()
         .map_err(|_| anyhow::anyhow!("PORT must be a valid number"))?;
 
-    let addr = SocketAddr::from(([127, 0, 0, 1], port));
+    // let addr = SocketAddr::from(([127, 0, 0, 1], port));
+    let addr = SocketAddr::from(([0, 0, 0, 0], port));
 
     let cors = Cors::new()
         // .allow_origin("http://localhost:5173")
@@ -70,8 +71,8 @@ async fn main() -> Result<()> {
     let app = Route::new()
         .at("", get(hello))
         .at("/:lng/language.json", get(get_language))
-        .nest("/generate-token.json", post(jwt::generate_token))
-        .nest("/refresh-token.json", post(jwt::refresh_token))
+        .at("/generate-token.json", post(jwt::generate_token))
+        .at("/refresh-token.json", post(jwt::refresh_token))
         .nest("/main", routes::main::routes())
         .nest("/master", routes::master::routes())
         .nest("/external", routes::external::routes())

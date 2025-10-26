@@ -368,7 +368,7 @@ pub fn delete(
     {
         Ok(affected_rows) => {
             if affected_rows > 0 {
-                diesel::delete(
+                let _ = diesel::delete(
                     tbl_mt_lang_value::table.filter(tbl_mt_lang_value::mt_lang_key_id.eq_any(&ids)),
                 )
                 .execute(conn);

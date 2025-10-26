@@ -1081,7 +1081,7 @@ pub async fn add_file(
             }
         };
 
-        let output = run_ssh_command(&session, &command)?;
+        let _ = run_ssh_command(&session, &command)?;
         Ok(StatusCode::CREATED)
     } else {
         Err(common::error_message(
