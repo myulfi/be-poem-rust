@@ -21,11 +21,19 @@ Installation in Local
 | Install Build Essen.  | /home/ubuntu sudo apt install build-essential -y
 | Install PKG           | /home/ubuntu sudo apt install pkg-config libssl-dev -y
 | Install libpq         | /home/ubuntu sudo apt install libpq-dev
+| Install sshpass       | /home/ubuntu sudo apt install sshpass
 --------------------------------------------------------------------------------------
 
 Installation in Production
 --------------------------------------------------------------------------------------
 | Description			| Command
+--------------------------------------------------------------------------------------
+| Install SSL (Optinal)
+--------------------------------------------------------------------------------------
+| Creat SSH Directory	| mkdir -p ~/.ssh
+| Give Access to Owner	| chmod 700 ~/.ssh
+| Add Pub Key to SSH	| echo "ssh-rsa" >> ~/.ssh/authorized_keys
+| Remove Execute Access	| chmod 600 ~/.ssh/authorized_keys
 --------------------------------------------------------------------------------------
 | Install Database
 --------------------------------------------------------------------------------------
@@ -93,6 +101,7 @@ server {
 | Delete Nginx HTTP		| /home/ubuntu sudo ufw delete allow 'Nginx HTTP'
 | See ufw status		| /home/ubuntu sudo ufw status
 | Allow Nginx HTTPS		| /home/ubuntu sudo ufw allow 'Nginx HTTPS'
+| Allow Multiple port	| /home/ubuntu sudo ufw allow 8081:8084/tcp
 | See ufw status		| /home/ubuntu sudo ufw status
 | Certbot				| /home/ubuntu sudo certbot --nginx -d domain.com -d api.domain.com
 | Input email			| your_email@gmail.com

@@ -55,7 +55,7 @@ ECHO.
 @rem scp -i "%PROD_PRIVATE_KEY%" -r src "%PROD_USER%@%PROD_HOST%:%DEVLOPMENT_DIR%/src"
 @rem scp -i "%PROD_PRIVATE_KEY%" Cargo.toml "%PROD_USER%@%PROD_HOST%:%DEVLOPMENT_DIR%/Cargo.toml"
 @rem ssh -i "%PROD_PRIVATE_KEY%" %PROD_USER%@%PROD_HOST% "cd %DEVLOPMENT_DIR% && $HOME/.cargo/bin/cargo build --release"
-wsl cp -r src %DEVLOPMENT_DIR%/src
+wsl rsync -a --delete src/ %DEVLOPMENT_DIR%/src/
 wsl cp Cargo.toml %DEVLOPMENT_DIR%/Cargo.toml
 wsl bash -c "cd %DEVLOPMENT_DIR% && $HOME/.cargo/bin/cargo build --release"
 wsl cp %DEVLOPMENT_DIR%/target/release/%PRODUCTION_BINARY% "$(pwd)"
