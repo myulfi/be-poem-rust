@@ -2,6 +2,7 @@ use std::env;
 
 use crate::auth::model::{AuthResponse, Claims, Login, UserAuthResponse};
 use crate::db::DbPool;
+use crate::models::common::DataResponse;
 use crate::models::user::User;
 use crate::models::user_role::UserRole;
 use crate::schema::tbl_user::dsl::*;
@@ -10,6 +11,7 @@ use crate::utils::common;
 use chrono::{Duration, Utc};
 use diesel::prelude::*;
 use jsonwebtoken::{EncodingKey, Header, encode};
+use poem::IntoResponse;
 use poem::{handler, http::StatusCode, web::Json};
 
 fn create_token(
@@ -84,7 +86,7 @@ fn build_auth_response(
 pub fn generate_token(
     pool: poem::web::Data<&DbPool>,
     Json(login): Json<Login>,
-) -> Result<Json<AuthResponse>, poem::Error> {
+) -> poem::Result<impl IntoResponse> {
     let conn = &mut pool.get().map_err(|_| {
         common::error_message(StatusCode::INTERNAL_SERVER_ERROR, "Connection failed")
     })?;
@@ -100,19 +102,16 @@ pub fn generate_token(
             _ => poem::Error::from_status(StatusCode::INTERNAL_SERVER_ERROR),
         })?;
 
-    Ok(Json(build_auth_response(
-        conn,
-        &user.username,
-        user.nick_nm,
-    )?))
-    // Ok(Json("Login success".to_string()))
+    Ok(Json(DataResponse {
+        data: build_auth_response(conn, &user.username, user.nick_nm)?,
+    }))
 }
 
 #[handler]
 pub fn refresh_token(
     pool: poem::web::Data<&DbPool>,
     jwt_auth: crate::auth::middleware::JwtAuth,
-) -> Result<Json<AuthResponse>, poem::Error> {
+) -> poem::Result<impl IntoResponse> {
     let conn = &mut pool.get().map_err(|_| {
         common::error_message(StatusCode::INTERNAL_SERVER_ERROR, "Connection failed")
     })?;
@@ -127,9 +126,7 @@ pub fn refresh_token(
             _ => poem::Error::from_status(StatusCode::INTERNAL_SERVER_ERROR),
         })?;
 
-    Ok(Json(build_auth_response(
-        conn,
-        &user.username,
-        user.nick_nm,
-    )?))
+    Ok(Json(DataResponse {
+        data: build_auth_response(conn, &user.username, user.nick_nm)?,
+    }))
 }
