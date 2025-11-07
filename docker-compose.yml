@@ -1,0 +1,21 @@
+services:
+  be-poem:
+    build: .
+    image: rust:latest
+    container_name: be-poem-rust
+    command: cargo run
+    working_dir: /usr/src/app
+    volumes:
+      - .:/usr/src/app
+      - ./target:/usr/src/app/target
+    ports:
+      - "3098:3098"
+    environment:
+      APP_NAME: "Development"
+      POD_NAME: "local-be-poem-rust-1"
+      PORT: 3098
+      DATABASE_URL: "postgres://postgres:Password*123@host.docker.internal:5433/main_db"
+      JWT_ACCESS_TOKEN_SECRET: "Fischl von Luftschloss Narfidort Narfidort"
+      JWT_ACCESS_TOKEN_EXPIRED: 1
+      JWT_REFRESH_TOKEN_SECRET: "Luftschloss Narfidort Narfidort Fischl von"
+      JWT_REFRESH_TOKEN_EXPIRED: 7

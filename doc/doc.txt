@@ -23,6 +23,15 @@ Installation in Local
 | Install libpq         | /home/ubuntu sudo apt install libpq-dev
 | Install sshpass       | /home/ubuntu sudo apt install sshpass
 --------------------------------------------------------------------------------------
+| Configuration Docker
+--------------------------------------------------------------------------------------
+| Create Image			| docker build -t be-poem-rust .
+| Run Cointainer		| docker run --rm -it -v ${PWD}:/usr/src/app -w /usr/src/app -p 3098:3098 be-poem-rust cargo run
+| Run Cointainer (Com.)	| docker compose -f .\docker-compose.yml up -d
+| See Log				| docker logs be-poem-rust
+| Enter Container		| docker exec -it be-poem-rust bash
+| Image Prod			| docker build -f Dockerfile -t myulfi/be-poem-rust:1 .
+--------------------------------------------------------------------------------------
 
 Installation in Production
 --------------------------------------------------------------------------------------
