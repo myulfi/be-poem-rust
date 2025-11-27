@@ -5,7 +5,7 @@ use crate::db::DbPool;
 use crate::models::common::DataResponse;
 use crate::models::user::User;
 use crate::models::user_role::UserRole;
-use crate::schema::tbl_user::dsl::*;
+use crate::schema::tbl_user;
 use crate::schema::tbl_user_role;
 use crate::utils::common;
 use chrono::{Duration, Utc};
@@ -15,7 +15,7 @@ use poem::IntoResponse;
 use poem::{handler, http::StatusCode, web::Json};
 
 fn create_token(
-    usr: i64,
+    id: i64,
     roles: Option<&Vec<i16>>,
     secret_key_env: &str,
     duration_env: &str,
@@ -34,7 +34,7 @@ fn create_token(
         .timestamp() as usize;
 
     let claims = Claims {
-        user_id: usr,
+        id,
         role: roles.cloned(),
         exp,
     };
@@ -90,9 +90,9 @@ pub fn generate_token(
         common::error_message(StatusCode::INTERNAL_SERVER_ERROR, "Connection failed")
     })?;
 
-    let user = tbl_user
-        .filter(username.eq(&login.username))
-        .filter(pass.eq(&login.password))
+    let user = tbl_user::table
+        .filter(tbl_user::username.eq(&login.username))
+        .filter(tbl_user::pass.eq(&login.password))
         .first::<User>(conn)
         .map_err(|err| match err {
             diesel::result::Error::NotFound => {
@@ -115,8 +115,8 @@ pub fn refresh_token(
         common::error_message(StatusCode::INTERNAL_SERVER_ERROR, "Connection failed")
     })?;
 
-    let user = tbl_user
-        .filter(id.eq(jwt_auth.claims.user_id))
+    let user = tbl_user::table
+        .filter(tbl_user::id.eq(jwt_auth.claims.id))
         .first::<User>(conn)
         .map_err(|err| match err {
             diesel::result::Error::NotFound => {

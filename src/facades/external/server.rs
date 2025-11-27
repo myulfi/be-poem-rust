@@ -125,7 +125,7 @@ pub fn add(
         private_key: entry_ext_server.private_key,
         is_lock: 1,
         is_del: 0,
-        created_by: jwt_auth.claims.user_id,
+        created_by: jwt_auth.claims.id,
         dt_created: Utc::now().naive_utc(),
         updated_by: None,
         dt_updated: None,
@@ -182,7 +182,7 @@ pub fn update(
     )
     .set((
         &entry_ext_server,
-        tbl_ext_server::updated_by.eq(Some(jwt_auth.claims.user_id)),
+        tbl_ext_server::updated_by.eq(Some(jwt_auth.claims.id)),
         tbl_ext_server::dt_updated.eq(Some(Utc::now().naive_utc())),
     ))
     .get_result::<ExternalServer>(conn)
@@ -215,7 +215,7 @@ pub fn delete(
     diesel::update(tbl_ext_server::table.filter(tbl_ext_server::id.eq(ext_server_id)))
         .set((
             tbl_ext_server::is_del.eq(1),
-            tbl_ext_server::updated_by.eq(Some(jwt_auth.claims.user_id)),
+            tbl_ext_server::updated_by.eq(Some(jwt_auth.claims.id)),
             tbl_ext_server::dt_updated.eq(Some(Utc::now().naive_utc())),
         ))
         .get_result::<ExternalServer>(conn)

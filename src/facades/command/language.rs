@@ -192,7 +192,7 @@ pub fn add(
         return Err(validation_error_response(e));
     }
 
-    let user_id = jwt_auth.claims.user_id.clone();
+    let user_id = jwt_auth.claims.id;
     let mt_lang_key = MasterLanguageKey {
         id: common::generate_id(),
         mt_lang_type_id: entry_mt_lang_key.mt_lang_type_id,
@@ -274,7 +274,7 @@ pub fn update(
         )
     })?;
 
-    let user_id = jwt_auth.claims.user_id;
+    let user_id = jwt_auth.claims.id;
     let updated = diesel::update(
         tbl_mt_lang_key::table
             .filter(tbl_mt_lang_key::id.eq(mt_lang_key_id))

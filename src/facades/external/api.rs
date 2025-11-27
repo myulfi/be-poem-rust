@@ -121,7 +121,7 @@ pub fn add(
         dscp: entry_ext_api.dscp,
         authz: None,
         is_del: 0,
-        created_by: jwt_auth.claims.user_id,
+        created_by: jwt_auth.claims.id,
         dt_created: Utc::now().naive_utc(),
         updated_by: None,
         dt_updated: None,
@@ -178,7 +178,7 @@ pub fn update(
     )
     .set((
         &entry_ext_api,
-        tbl_ext_api::updated_by.eq(Some(jwt_auth.claims.user_id.clone())),
+        tbl_ext_api::updated_by.eq(Some(jwt_auth.claims.id)),
         tbl_ext_api::dt_updated.eq(Some(Utc::now().naive_utc())),
     ))
     .get_result::<ExternalApi>(conn)
@@ -211,7 +211,7 @@ pub fn delete(
     diesel::update(tbl_ext_api::table.filter(tbl_ext_api::id.eq(ext_api_id)))
         .set((
             tbl_ext_api::is_del.eq(1),
-            tbl_ext_api::updated_by.eq(Some(jwt_auth.claims.user_id.clone())),
+            tbl_ext_api::updated_by.eq(Some(jwt_auth.claims.id)),
             tbl_ext_api::dt_updated.eq(Some(Utc::now().naive_utc())),
         ))
         .get_result::<ExternalApi>(conn)
