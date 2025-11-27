@@ -6,6 +6,7 @@ use serde::Serialize;
 #[serde(rename_all = "camelCase")]
 #[diesel(table_name = crate::schema::tbl_user)]
 pub struct User {
+    pub id: i64,
     pub username: String,
     #[serde(rename = "password")]
     pub pass: Option<String>,
@@ -27,10 +28,10 @@ pub struct User {
     pub agent: Option<String>,
     #[serde(rename = "resignDate")]
     pub dt_resign: Option<NaiveDate>,
-    pub created_by: String,
+    pub created_by: i64,
     #[serde(rename = "createdDate")]
     pub dt_created: NaiveDateTime,
-    pub updated_by: Option<String>,
+    pub updated_by: Option<i64>,
     #[serde(rename = "updatedDate")]
     pub dt_updated: Option<NaiveDateTime>,
     pub version: i16,

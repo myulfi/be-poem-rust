@@ -649,7 +649,7 @@ pub async fn query_manual_run(
                             id: common::generate_id(),
                             ext_database_id,
                             query: part.to_string(),
-                            created_by: jwt_auth.claims.username.clone(),
+                            created_by: jwt_auth.claims.user_id.clone(),
                             dt_created: chrono::Utc::now().naive_utc(),
                             updated_by: None,
                             dt_updated: None,

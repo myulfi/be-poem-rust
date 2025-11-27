@@ -9,9 +9,12 @@ CREATE TABLE tbl_mt_branch(
 	, qr_attend_in VARCHAR (6)
 	, qr_attend_out VARCHAR (6)
 	, is_del SMALLINT DEFAULT(0)
-	, created_by VARCHAR (20)
-	, dt_created TIMESTAMP
-	, updated_by VARCHAR (20)
+	, created_by BIGINT NOT NULL
+	, dt_created TIMESTAMP NOT NULL
+	, updated_by BIGINT
 	, dt_updated TIMESTAMP
 	, version SMALLINT DEFAULT(0)
 );
+
+INSERT INTO tbl_mt_branch VALUES(1, 'HO', 'Jalan Pulau Intan', -6.428132855073892, 106.71272040609797, 100, 1, 'ABCDEF', 'ABCDEF', 0, 1764248315616711, CURRENT_DATE, NULL, NULL, 0);
+INSERT INTO tbl_mt_branch VALUES(2, 'Kemang', 'Jalan Kemang', -6.27232642118957, 106.82046213382861, 100, 1, 'ABCDEF', 'ABCDEF', 0, 1764248315616711, CURRENT_DATE, NULL, NULL, 0);

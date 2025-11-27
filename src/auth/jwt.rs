@@ -15,7 +15,7 @@ use poem::IntoResponse;
 use poem::{handler, http::StatusCode, web::Json};
 
 fn create_token(
-    usr: &str,
+    usr: i64,
     roles: Option<&Vec<i16>>,
     secret_key_env: &str,
     duration_env: &str,
@@ -34,7 +34,7 @@ fn create_token(
         .timestamp() as usize;
 
     let claims = Claims {
-        username: usr.to_string(),
+        user_id: usr,
         role: roles.cloned(),
         exp,
     };
@@ -49,24 +49,23 @@ fn create_token(
 
 fn build_auth_response(
     conn: &mut diesel::r2d2::PooledConnection<diesel::r2d2::ConnectionManager<PgConnection>>,
-    username_str: &str,
-    nick_name: Option<String>,
+    user: User,
 ) -> Result<AuthResponse, poem::Error> {
     let user_role = tbl_user_role::table
-        .filter(tbl_user_role::username.eq(username_str))
+        .filter(tbl_user_role::user_id.eq(user.id))
         .load::<UserRole>(conn)
         .map_err(|_| common::error_message(StatusCode::NOT_FOUND, "Not Found"))?;
     let roles: Vec<i16> = user_role.into_iter().map(|r| r.mt_role_id).collect();
 
     let access_token = create_token(
-        username_str,
+        user.id,
         Some(&roles),
         "JWT_ACCESS_TOKEN_SECRET",
         "JWT_ACCESS_TOKEN_EXPIRED",
     )?;
 
     let refresh_tkn = create_token(
-        username_str,
+        user.id,
         None,
         "JWT_REFRESH_TOKEN_SECRET",
         "JWT_REFRESH_TOKEN_EXPIRED",
@@ -76,7 +75,7 @@ fn build_auth_response(
         access_token,
         refresh_token: refresh_tkn,
         user: UserAuthResponse {
-            nm: nick_name.unwrap_or_else(|| "Guest".to_string()),
+            nm: user.nick_nm.unwrap_or_else(|| "Guest".to_string()),
             role: roles,
         },
     })
@@ -103,7 +102,7 @@ pub fn generate_token(
         })?;
 
     Ok(Json(DataResponse {
-        data: build_auth_response(conn, &user.username, user.nick_nm)?,
+        data: build_auth_response(conn, user)?,
     }))
 }
 
@@ -117,7 +116,7 @@ pub fn refresh_token(
     })?;
 
     let user = tbl_user
-        .filter(username.eq(&jwt_auth.claims.username))
+        .filter(id.eq(jwt_auth.claims.user_id))
         .first::<User>(conn)
         .map_err(|err| match err {
             diesel::result::Error::NotFound => {
@@ -127,6 +126,6 @@ pub fn refresh_token(
         })?;
 
     Ok(Json(DataResponse {
-        data: build_auth_response(conn, &user.username, user.nick_nm)?,
+        data: build_auth_response(conn, user)?,
     }))
 }

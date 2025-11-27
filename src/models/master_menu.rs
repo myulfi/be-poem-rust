@@ -22,10 +22,10 @@ pub struct MasterMenu {
     pub is_blank_target: i16,
     #[serde(rename = "deletedFlag")]
     pub is_del: i16,
-    pub created_by: String,
+    pub created_by: i64,
     #[serde(rename = "createdDate")]
     pub dt_created: NaiveDateTime,
-    pub updated_by: Option<String>,
+    pub updated_by: Option<i64>,
     #[serde(rename = "updatedDate")]
     pub dt_updated: Option<NaiveDateTime>,
     pub version: i16,
@@ -50,10 +50,10 @@ pub struct MenuNode {
     pub is_blank_target: i16,
     #[serde(rename = "deletedFlag")]
     pub is_del: i16,
-    pub created_by: String,
+    pub created_by: i64,
     #[serde(rename = "createdDate")]
     pub dt_created: NaiveDateTime,
-    pub updated_by: Option<String>,
+    pub updated_by: Option<i64>,
     #[serde(rename = "updatedDate")]
     pub dt_updated: Option<NaiveDateTime>,
     pub version: i16,

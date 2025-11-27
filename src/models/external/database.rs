@@ -30,10 +30,10 @@ pub struct ExternalDatabase {
     pub is_lock: i16,
     #[serde(rename = "deletedFlag")]
     pub is_del: i16,
-    pub created_by: String,
+    pub created_by: i64,
     #[serde(rename = "createdDate")]
     pub dt_created: NaiveDateTime,
-    pub updated_by: Option<String>,
+    pub updated_by: Option<i64>,
     #[serde(rename = "updatedDate")]
     pub dt_updated: Option<NaiveDateTime>,
     pub version: i16,
@@ -84,16 +84,16 @@ pub struct EntryExternalDatabase {
 pub struct ExternalDatabaseQuery {
     pub id: i64,
     #[serde(rename = "description")]
-    pub dscp: Option<String>,
+    pub dscp: String,
     #[serde(rename = "externalDatabaseId")]
     pub ext_database_id: i64,
     pub query: String,
     #[serde(rename = "deletedFlag")]
     pub is_del: i16,
-    pub created_by: String,
+    pub created_by: i64,
     #[serde(rename = "createdDate")]
     pub dt_created: NaiveDateTime,
-    pub updated_by: Option<String>,
+    pub updated_by: Option<i64>,
     #[serde(rename = "updatedDate")]
     pub dt_updated: Option<NaiveDateTime>,
     pub version: i16,
@@ -107,10 +107,10 @@ pub struct QueryManual {
     #[serde(rename = "externalDatabaseId")]
     pub ext_database_id: i64,
     pub query: String,
-    pub created_by: String,
+    pub created_by: i64,
     #[serde(rename = "createdDate")]
     pub dt_created: NaiveDateTime,
-    pub updated_by: Option<String>,
+    pub updated_by: Option<i64>,
     #[serde(rename = "updatedDate")]
     pub dt_updated: Option<NaiveDateTime>,
     pub version: i16,

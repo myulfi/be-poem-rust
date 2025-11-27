@@ -192,13 +192,13 @@ pub fn add(
         return Err(validation_error_response(e));
     }
 
-    let username = jwt_auth.claims.username.clone();
+    let user_id = jwt_auth.claims.user_id.clone();
     let mt_lang_key = MasterLanguageKey {
         id: common::generate_id(),
         mt_lang_type_id: entry_mt_lang_key.mt_lang_type_id,
         key_cd: entry_mt_lang_key.key_cd,
         is_del: 0,
-        created_by: username.clone(),
+        created_by: user_id,
         dt_created: Utc::now().naive_utc(),
         updated_by: None,
         dt_updated: None,
@@ -234,7 +234,7 @@ pub fn add(
                     mt_lang_key_id: inserted.id,
                     value: val.value,
                     is_del: 0,
-                    created_by: username.clone(),
+                    created_by: user_id,
                     dt_created: Utc::now().naive_utc(),
                     updated_by: None,
                     dt_updated: None,
@@ -274,7 +274,7 @@ pub fn update(
         )
     })?;
 
-    let username = jwt_auth.claims.username.clone();
+    let user_id = jwt_auth.claims.user_id;
     let updated = diesel::update(
         tbl_mt_lang_key::table
             .filter(tbl_mt_lang_key::id.eq(mt_lang_key_id))
@@ -284,7 +284,7 @@ pub fn update(
         tbl_mt_lang_key::mt_lang_type_id.eq(entry_mt_lang_key.mt_lang_type_id),
         tbl_mt_lang_key::key_cd.eq(entry_mt_lang_key.key_cd),
         tbl_mt_lang_key::version.eq(entry_mt_lang_key.version + 1),
-        tbl_mt_lang_key::updated_by.eq(username.clone()),
+        tbl_mt_lang_key::updated_by.eq(user_id),
         tbl_mt_lang_key::dt_updated.eq(Some(Utc::now().naive_utc())),
     ))
     .get_result::<MasterLanguageKey>(conn)
@@ -320,7 +320,7 @@ pub fn update(
                     mt_lang_key_id: updated.id,
                     value: val.value,
                     is_del: 0,
-                    created_by: username.clone(),
+                    created_by: user_id,
                     dt_created: Utc::now().naive_utc(),
                     updated_by: None,
                     dt_updated: None,

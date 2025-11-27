@@ -8,7 +8,7 @@ pub struct Login {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Claims {
-    pub username: String,
+    pub user_id: i64,
     #[serde(rename = "roleList", skip_serializing_if = "Option::is_none")]
     pub role: Option<Vec<i16>>,
     pub exp: usize,

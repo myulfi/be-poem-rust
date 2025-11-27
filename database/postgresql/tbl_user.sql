@@ -1,5 +1,6 @@
 CREATE TABLE tbl_user(
-	username VARCHAR (20) NOT NULL PRIMARY KEY
+	id BIGINT PRIMARY KEY
+	, username VARCHAR (20) NOT NULL
 	, pass VARCHAR (32)
 	, nick_nm VARCHAR (20)
 	, full_nm VARCHAR (50)
@@ -13,11 +14,11 @@ CREATE TABLE tbl_user(
 	, last_access VARCHAR (2000)
 	, agent VARCHAR (300)
 	, dt_resign DATE
-	, created_by VARCHAR (20)
-	, dt_created TIMESTAMP
-	, updated_by VARCHAR (20)
+	, created_by BIGINT NOT NULL
+	, dt_created TIMESTAMP NOT NULL
+	, updated_by BIGINT
 	, dt_updated TIMESTAMP
 	, version SMALLINT DEFAULT(0)
 );
 
-INSERT INTO tbl_user  VALUES ('myulfi', 'Password*123', 'Mul', 'Pak Mul', 'mulfiyuladi@gmail.com', '6287877636847', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 'system', CURRENT_DATE, NULL, NULL, 0);
+INSERT INTO tbl_user VALUES (1764248315616711, 'myulfi', 'Password*123', 'Mul', 'Pak Mul', 'mulfiyuladi@gmail.com', '6287877636847', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 0, CURRENT_DATE, NULL, NULL, 0);

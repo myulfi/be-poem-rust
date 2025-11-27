@@ -4,9 +4,9 @@ CREATE TABLE tbl_mt_lang_value(
 	, mt_lang_key_id BIGINT NOT NULL
 	, value VARCHAR (150) NOT NULL
 	, is_del SMALLINT DEFAULT(0)
-	, created_by VARCHAR (20)
-	, dt_created TIMESTAMP
-	, updated_by VARCHAR (20)
+	, created_by BIGINT NOT NULL
+	, dt_created TIMESTAMP NOT NULL
+	, updated_by BIGINT
 	, dt_updated TIMESTAMP
 	, version SMALLINT DEFAULT(0)
 );

@@ -135,7 +135,7 @@ pub fn add(
         foreign_id: entry_example_template.foreign_id,
         is_active: 1,
         is_del: 0,
-        created_by: jwt_auth.claims.username,
+        created_by: jwt_auth.claims.user_id,
         dt_created: Utc::now().naive_utc(),
         updated_by: None,
         dt_updated: None,
@@ -239,7 +239,7 @@ pub fn update(
     // .set(&update)
     .set((
         &entry_example_template,
-        tbl_example_template::updated_by.eq(Some(jwt_auth.claims.username.clone())),
+        tbl_example_template::updated_by.eq(Some(jwt_auth.claims.user_id)),
         tbl_example_template::dt_updated.eq(Some(Utc::now().naive_utc())),
     ))
     .get_result::<ExampleTemplate>(conn)

@@ -129,7 +129,7 @@ pub fn add(
         is_use_page: entry_ext_database.is_use_page,
         is_lock: entry_ext_database.is_lock,
         is_del: 0,
-        created_by: jwt_auth.claims.username,
+        created_by: jwt_auth.claims.user_id,
         dt_created: Utc::now().naive_utc(),
         updated_by: None,
         dt_updated: None,
@@ -186,7 +186,7 @@ pub fn update(
     )
     .set((
         &entry_ext_database,
-        tbl_ext_database::updated_by.eq(Some(jwt_auth.claims.username.clone())),
+        tbl_ext_database::updated_by.eq(Some(jwt_auth.claims.user_id.clone())),
         tbl_ext_database::dt_updated.eq(Some(Utc::now().naive_utc())),
     ))
     .get_result::<ExternalDatabase>(conn)
@@ -219,7 +219,7 @@ pub fn delete(
     diesel::update(tbl_ext_database::table.filter(tbl_ext_database::id.eq(ext_database_id)))
         .set((
             tbl_ext_database::is_del.eq(1),
-            tbl_ext_database::updated_by.eq(Some(jwt_auth.claims.username.clone())),
+            tbl_ext_database::updated_by.eq(Some(jwt_auth.claims.user_id.clone())),
             tbl_ext_database::dt_updated.eq(Some(Utc::now().naive_utc())),
         ))
         .get_result::<ExternalDatabase>(conn)

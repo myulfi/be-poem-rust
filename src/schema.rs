@@ -11,16 +11,17 @@ table! {
         foreign_id -> Nullable<BigInt>,
         is_active -> SmallInt,
         is_del -> SmallInt,
-        created_by -> Varchar,
+        created_by -> BigInt,
         dt_created -> Timestamp,
-        updated_by -> Nullable<Varchar>,
+        updated_by -> Nullable<BigInt>,
         dt_updated -> Nullable<Timestamp>,
         version -> SmallInt,
     }
 }
 
 table! {
-    tbl_user (username) {
+    tbl_user (id) {
+        id -> BigInt,
         username -> Varchar,
         pass -> Nullable<Varchar>,
         nick_nm -> Nullable<Varchar>,
@@ -35,9 +36,9 @@ table! {
         last_access -> Nullable<Varchar>,
         agent -> Nullable<Varchar>,
         dt_resign -> Nullable<Date>,
-        created_by -> Varchar,
+        created_by -> BigInt,
         dt_created -> Timestamp,
-        updated_by -> Nullable<Varchar>,
+        updated_by -> Nullable<BigInt>,
         dt_updated -> Nullable<Timestamp>,
         version -> SmallInt,
     }
@@ -46,12 +47,12 @@ table! {
 table! {
     tbl_user_role (id) {
         id -> BigInt,
-        username -> Varchar,
+        user_id -> BigInt,
         mt_role_id -> SmallInt,
         is_del -> SmallInt,
-        created_by -> Varchar,
+        created_by -> BigInt,
         dt_created -> Timestamp,
-        updated_by -> Nullable<Varchar>,
+        updated_by -> Nullable<BigInt>,
         dt_updated -> Nullable<Timestamp>,
         version -> SmallInt,
     }
@@ -69,9 +70,9 @@ table! {
         is_new -> SmallInt,
         is_blank_target -> SmallInt,
         is_del -> SmallInt,
-        created_by -> Varchar,
+        created_by -> BigInt,
         dt_created -> Timestamp,
-        updated_by -> Nullable<Varchar>,
+        updated_by -> Nullable<BigInt>,
         dt_updated -> Nullable<Timestamp>,
         version -> SmallInt
     }
@@ -85,9 +86,9 @@ table! {
         url -> Varchar,
         pagination -> Varchar,
         is_del -> SmallInt,
-        created_by -> Varchar,
+        created_by -> BigInt,
         dt_created -> Timestamp,
-        updated_by -> Nullable<Varchar>,
+        updated_by -> Nullable<BigInt>,
         dt_updated -> Nullable<Timestamp>,
         version -> SmallInt,
     }
@@ -109,9 +110,9 @@ table! {
         is_use_page -> SmallInt,
         is_lock -> SmallInt,
         is_del -> SmallInt,
-        created_by -> Varchar,
+        created_by -> BigInt,
         dt_created -> Timestamp,
-        updated_by -> Nullable<Varchar>,
+        updated_by -> Nullable<BigInt>,
         dt_updated -> Nullable<Timestamp>,
         version -> SmallInt,
     }
@@ -120,13 +121,13 @@ table! {
 table! {
     tbl_ext_database_query (id) {
         id -> BigInt,
-        dscp -> Nullable<Varchar>,
+        dscp -> Varchar,
         ext_database_id -> BigInt,
         query -> Varchar,
         is_del -> SmallInt,
-        created_by -> Varchar,
+        created_by -> BigInt,
         dt_created -> Timestamp,
-        updated_by -> Nullable<Varchar>,
+        updated_by -> Nullable<BigInt>,
         dt_updated -> Nullable<Timestamp>,
         version -> SmallInt,
     }
@@ -137,9 +138,9 @@ table! {
         id -> BigInt,
         ext_database_id -> BigInt,
         query -> Varchar,
-        created_by -> Varchar,
+        created_by -> BigInt,
         dt_created -> Timestamp,
-        updated_by -> Nullable<Varchar>,
+        updated_by -> Nullable<BigInt>,
         dt_updated -> Nullable<Timestamp>,
         version -> SmallInt,
     }
@@ -151,9 +152,9 @@ table! {
         nm -> Varchar,
         icon -> Varchar,
         is_del -> SmallInt,
-        created_by -> Varchar,
+        created_by -> BigInt,
         dt_created -> Timestamp,
-        updated_by -> Nullable<Varchar>,
+        updated_by -> Nullable<BigInt>,
         dt_updated -> Nullable<Timestamp>,
         version -> SmallInt,
     }
@@ -172,9 +173,9 @@ table! {
         private_key -> Nullable<Varchar>,
         is_lock -> SmallInt,
         is_del -> SmallInt,
-        created_by -> Varchar,
+        created_by -> BigInt,
         dt_created -> Timestamp,
-        updated_by -> Nullable<Varchar>,
+        updated_by -> Nullable<BigInt>,
         dt_updated -> Nullable<Timestamp>,
         version -> SmallInt,
     }
@@ -187,9 +188,9 @@ table! {
         dscp -> Nullable<Varchar>,
         authz -> Nullable<Varchar>,
         is_del -> SmallInt,
-        created_by -> Varchar,
+        created_by -> BigInt,
         dt_created -> Timestamp,
-        updated_by -> Nullable<Varchar>,
+        updated_by -> Nullable<BigInt>,
         dt_updated -> Nullable<Timestamp>,
         version -> SmallInt,
     }
@@ -203,9 +204,9 @@ table! {
         key -> Varchar,
         val -> Nullable<Varchar>,
         is_del -> SmallInt,
-        created_by -> Varchar,
+        created_by -> BigInt,
         dt_created -> Timestamp,
-        updated_by -> Nullable<Varchar>,
+        updated_by -> Nullable<BigInt>,
         dt_updated -> Nullable<Timestamp>,
         version -> SmallInt,
     }
@@ -223,9 +224,9 @@ table! {
         is_have_authz -> SmallInt,
         body -> Nullable<Varchar>,
         is_del -> SmallInt,
-        created_by -> Varchar,
+        created_by -> BigInt,
         dt_created -> Timestamp,
-        updated_by -> Nullable<Varchar>,
+        updated_by -> Nullable<BigInt>,
         dt_updated -> Nullable<Timestamp>,
         version -> SmallInt,
     }
@@ -237,9 +238,9 @@ table! {
         cd -> Varchar,
         nm -> Varchar,
         is_del -> SmallInt,
-        created_by -> Varchar,
+        created_by -> BigInt,
         dt_created -> Timestamp,
-        updated_by -> Nullable<Varchar>,
+        updated_by -> Nullable<BigInt>,
         dt_updated -> Nullable<Timestamp>,
         version -> SmallInt,
     }
@@ -251,9 +252,9 @@ table! {
         cd -> Varchar,
         nm -> Varchar,
         is_del -> SmallInt,
-        created_by -> Varchar,
+        created_by -> BigInt,
         dt_created -> Timestamp,
-        updated_by -> Nullable<Varchar>,
+        updated_by -> Nullable<BigInt>,
         dt_updated -> Nullable<Timestamp>,
         version -> SmallInt,
     }
@@ -265,9 +266,9 @@ table! {
         mt_lang_type_id -> SmallInt,
         key_cd -> Varchar,
         is_del -> SmallInt,
-        created_by -> Varchar,
+        created_by -> BigInt,
         dt_created -> Timestamp,
-        updated_by -> Nullable<Varchar>,
+        updated_by -> Nullable<BigInt>,
         dt_updated -> Nullable<Timestamp>,
         version -> SmallInt,
     }
@@ -281,9 +282,9 @@ table! {
         mt_lang_key_id -> BigInt,
         value -> Varchar,
         is_del -> SmallInt,
-        created_by -> Varchar,
+        created_by -> BigInt,
         dt_created -> Timestamp,
-        updated_by -> Nullable<Varchar>,
+        updated_by -> Nullable<BigInt>,
         dt_updated -> Nullable<Timestamp>,
         version -> SmallInt,
     }

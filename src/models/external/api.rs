@@ -16,10 +16,10 @@ pub struct ExternalApi {
     pub authz: Option<String>,
     #[serde(rename = "deletedFlag")]
     pub is_del: i16,
-    pub created_by: String,
+    pub created_by: i64,
     #[serde(rename = "createdDate")]
     pub dt_created: NaiveDateTime,
-    pub updated_by: Option<String>,
+    pub updated_by: Option<i64>,
     #[serde(rename = "updatedDate")]
     pub dt_updated: Option<NaiveDateTime>,
     pub version: i16,
@@ -56,10 +56,10 @@ pub struct ExternalApiVariable {
     #[serde(rename = "value")]
     pub val: Option<String>,
     pub is_del: i16,
-    pub created_by: String,
+    pub created_by: i64,
     #[serde(rename = "createdDate")]
     pub dt_created: NaiveDateTime,
-    pub updated_by: Option<String>,
+    pub updated_by: Option<i64>,
     #[serde(rename = "updatedDate")]
     pub dt_updated: Option<NaiveDateTime>,
     pub version: i16,
@@ -97,10 +97,10 @@ pub struct ExternalApiRequest {
     pub is_have_authz: i16,
     pub body: Option<String>,
     pub is_del: i16,
-    pub created_by: String,
+    pub created_by: i64,
     #[serde(rename = "createdDate")]
     pub dt_created: NaiveDateTime,
-    pub updated_by: Option<String>,
+    pub updated_by: Option<i64>,
     #[serde(rename = "updatedDate")]
     pub dt_updated: Option<NaiveDateTime>,
     pub version: i16,
@@ -125,10 +125,10 @@ pub struct ExternalApiRequestNode {
     pub body: Option<String>,
     #[serde(rename = "deletedFlag")]
     pub is_del: i16,
-    pub created_by: String,
+    pub created_by: i64,
     #[serde(rename = "dateCreated")]
     pub dt_created: NaiveDateTime,
-    pub updated_by: Option<String>,
+    pub updated_by: Option<i64>,
     #[serde(rename = "dateUpdated")]
     pub dt_updated: Option<NaiveDateTime>,
     pub version: i16,
