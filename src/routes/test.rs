@@ -10,7 +10,7 @@ pub fn routes() -> Route {
         .at(
             "/:id/example-template.json",
             get(example_template::get)
-                .patch(example_template::update)
+                .put(example_template::update)
                 .delete(example_template::delete),
         )
 }

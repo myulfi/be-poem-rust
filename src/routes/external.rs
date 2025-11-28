@@ -5,7 +5,7 @@ use crate::facades::external::database_query;
 use crate::facades::external::server;
 use crate::facades::external::server_command;
 
-use poem::{Route, get, patch, post};
+use poem::{Route, get, post, put};
 
 pub fn routes() -> Route {
     Route::new()
@@ -13,7 +13,7 @@ pub fn routes() -> Route {
         .at(
             "/:id/database.json",
             get(database::get)
-                .patch(database::update)
+                .put(database::update)
                 .delete(database::delete),
         )
         .at("/:id/database-connect.json", get(database_query::connect))
@@ -81,7 +81,7 @@ pub fn routes() -> Route {
         .at(
             "/:id/server.json",
             get(server::get)
-                .patch(server::update)
+                .put(server::update)
                 .delete(server::delete),
         )
         .at("/:id/server-connect.json", get(server_command::connect))
@@ -89,13 +89,13 @@ pub fn routes() -> Route {
         .at("/:id/server-entity.json", 
         post(server_command::add_folder)
             .get(server_command::download_entity)
-            .patch(server_command::rename_entity)
+            .put(server_command::rename_entity)
         )
         .at(
             "/:id/server-file.json", 
             get(server_command::get_file)
             .post(server_command::add_file)
-            .patch(server_command::update_file)
+            .put(server_command::update_file)
         )
         .at(
             "/:id/server-file-upload.json", 
@@ -103,20 +103,20 @@ pub fn routes() -> Route {
         )
         .at(
             "/:id/server-entity-clone.json", 
-            patch(server_command::clone_entity)
+            put(server_command::clone_entity)
         )
         .at(
             "/:id/server-entity-copy.json", 
-            patch(server_command::copy_entity)
+            put(server_command::copy_entity)
         )
         .at(
             "/:id/server-entity-remove.json", 
-            patch(server_command::remove_entity)
+            put(server_command::remove_entity)
         )
         .at("/api.json", get(api::list).post(api::add))
         .at(
             "/:id/api.json",
-            get(api::get).patch(api::update).delete(api::delete),
+            get(api::get).put(api::update).delete(api::delete),
         )
         .at(
             "/:id/api-request.json",

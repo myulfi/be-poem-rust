@@ -45,6 +45,34 @@ table! {
 }
 
 table! {
+    tbl_mt_role (id) {
+        id -> SmallInt,
+        nm -> Varchar,
+        dscp -> Nullable<Varchar>,
+        is_del -> SmallInt,
+        created_by -> BigInt,
+        dt_created -> Timestamp,
+        updated_by -> Nullable<BigInt>,
+        dt_updated -> Nullable<Timestamp>,
+        version -> SmallInt,
+    }
+}
+
+table! {
+    tbl_mt_role_menu (id) {
+        id -> BigInt,
+        mt_role_id -> Smallint,
+        mt_menu_id -> Smallint,
+        is_del -> SmallInt,
+        created_by -> BigInt,
+        dt_created -> Timestamp,
+        updated_by -> Nullable<BigInt>,
+        dt_updated -> Nullable<Timestamp>,
+        version -> SmallInt,
+    }
+}
+
+table! {
     tbl_user_role (id) {
         id -> BigInt,
         user_id -> BigInt,
