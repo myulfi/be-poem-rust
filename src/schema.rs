@@ -71,6 +71,7 @@ table! {
         version -> SmallInt,
     }
 }
+allow_tables_to_appear_in_same_query!(tbl_mt_menu, tbl_mt_role_menu);
 
 table! {
     tbl_user_role (id) {

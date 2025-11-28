@@ -1,6 +1,7 @@
 use crate::models::command::role::MasterRoleMenu;
 use crate::models::common::{DataResponse, PaginatedResponse};
-use crate::schema::{tbl_mt_role, tbl_mt_role_menu};
+use crate::models::master_menu::{MasterMenuRole, MenuRoleNode};
+use crate::schema::{tbl_mt_menu, tbl_mt_role, tbl_mt_role_menu};
 use crate::utils::common::{self, validation_error_response};
 use crate::{
     db::DbPool,
@@ -261,17 +262,66 @@ pub fn menu_list(
         )
     })?;
 
-    let data = tbl_mt_role_menu::table
-        .filter(tbl_mt_role_menu::mt_role_id.eq(role_id))
-        .load::<MasterRoleMenu>(conn)
-        .map_err(|e| {
-            eprintln!("Loading error: {}", e);
-            common::error_message(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "information.internalServerError",
-            )
+    let tbl_mt_menu = tbl_mt_menu::table
+        .left_join(
+            tbl_mt_role_menu::table.on(tbl_mt_role_menu::mt_menu_id
+                .eq(tbl_mt_menu::id)
+                .and(tbl_mt_role_menu::mt_role_id.eq(role_id))
+                .and(tbl_mt_role_menu::is_del.eq(0))),
+        )
+        .filter(tbl_mt_menu::is_del.eq(0))
+        .select((
+            tbl_mt_menu::id,
+            tbl_mt_menu::nm,
+            tbl_mt_menu::icon,
+            tbl_mt_menu::seq,
+            tbl_mt_menu::path,
+            tbl_mt_menu::mt_menu_parent_id,
+            tbl_mt_role_menu::id.nullable(),
+        ))
+        .order(tbl_mt_menu::seq.asc())
+        .load::<MasterMenuRole>(conn)
+        .map_err(|_| {
+            common::error_message(StatusCode::INTERNAL_SERVER_ERROR, "Failed to load data")
         })?;
-    Ok(Json(DataResponse { data }))
+
+    let tree = build_menu_tree(tbl_mt_menu);
+    Ok(Json(DataResponse { data: tree }))
+}
+
+fn build_menu_tree(data: Vec<MasterMenuRole>) -> Vec<MenuRoleNode> {
+    use std::collections::HashMap;
+
+    let mut map: HashMap<i16, Vec<MasterMenuRole>> = HashMap::new();
+
+    for item in data.into_iter() {
+        map.entry(item.mt_menu_parent_id).or_default().push(item);
+    }
+
+    fn build_nodes(
+        parent_id: i16,
+        map: &mut HashMap<i16, Vec<MasterMenuRole>>,
+    ) -> Vec<MenuRoleNode> {
+        if let Some(children) = map.remove(&parent_id) {
+            children
+                .into_iter()
+                .map(|item| MenuRoleNode {
+                    id: item.id,
+                    nm: item.nm,
+                    icon: item.icon,
+                    seq: item.seq,
+                    path: item.path,
+                    mt_menu_parent_id: item.mt_menu_parent_id,
+                    is_checked: if item.mt_role_menu_id.is_some() { 1 } else { 0 },
+                    children: build_nodes(item.id, map),
+                })
+                .collect()
+        } else {
+            vec![]
+        }
+    }
+
+    build_nodes(0, &mut map) // Root: mt_menu_parent_id == 0
 }
 
 #[handler]

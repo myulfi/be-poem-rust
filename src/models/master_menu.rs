@@ -31,6 +31,39 @@ pub struct MasterMenu {
     pub version: i16,
 }
 
+#[derive(Debug, Clone, Serialize, Queryable)]
+#[serde(rename_all = "camelCase")]
+pub struct MasterMenuRole {
+    pub id: i16,
+    #[serde(rename = "name")]
+    pub nm: String,
+    pub icon: Option<String>,
+    #[serde(rename = "sequence")]
+    pub seq: i16,
+    pub path: Option<String>,
+    #[serde(rename = "menuParentId")]
+    pub mt_menu_parent_id: i16,
+    #[serde(rename = "roleMenuId")]
+    pub mt_role_menu_id: Option<i64>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MenuRoleNode {
+    pub id: i16,
+    #[serde(rename = "name")]
+    pub nm: String,
+    pub icon: Option<String>,
+    #[serde(rename = "sequence")]
+    pub seq: i16,
+    pub path: Option<String>,
+    #[serde(rename = "menuParentId")]
+    pub mt_menu_parent_id: i16,
+    #[serde(rename = "checkedFlag")]
+    pub is_checked: i16,
+    pub children: Vec<MenuRoleNode>,
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MenuNode {

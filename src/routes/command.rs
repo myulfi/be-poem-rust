@@ -10,7 +10,7 @@ pub fn routes() -> Route {
             get(role::get).put(role::update).delete(role::delete),
         )
         .at(
-            "/role-menu.json",
+            "/:id/role-menu.json",
             get(role::menu_list).post(role::menu_update),
         )
         .at("/language.json", get(language::list).post(language::add))

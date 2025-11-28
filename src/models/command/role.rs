@@ -1,9 +1,5 @@
-use bigdecimal::BigDecimal;
-use chrono::{NaiveDate, NaiveDateTime};
-use diesel::{
-    prelude::{AsChangeset, Insertable, Queryable},
-    sql_types::SmallInt,
-};
+use chrono::NaiveDateTime;
+use diesel::prelude::{AsChangeset, Insertable, Queryable};
 use serde::{Deserialize, Serialize};
 use validator_derive::Validate;
 
